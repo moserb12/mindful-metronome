@@ -168,6 +168,7 @@ export function MetronomeVisual({
 }: MetronomeVisualProps) {
   const armRef = useRef<SVGGElement | null>(null);
   const pupilRef = useRef<SVGCircleElement | null>(null);
+  const svgRef = useRef<SVGSVGElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const smoothedRef = useRef<number[] | null>(null);
   const rafRef = useRef<number | null>(null);
@@ -321,10 +322,61 @@ export function MetronomeVisual({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isPlaying, bandInfo.color, onSwingUpdate]);
 
+  // When the pendulum isn't moving, the eye watches the cursor instead —
+  // an idle instrument that's still paying attention. Tracks the pointer
+  // anywhere on the page (not just while hovering the visual itself), so
+  // it reads as alive rather than as a hover effect. Deliberately a
+  // SEPARATE effect from the swing-driven one above rather than one
+  // combined effect: the two are mutually exclusive by construction (this
+  // one is a no-op while playing, the other resets the pupil to center the
+  // instant it isn't), so keeping them apart avoids one growing a pile of
+  // playing/!playing branches.
+  useEffect(() => {
+    if (isPlaying) return;
+    const svg = svgRef.current;
+    const pupil = pupilRef.current;
+    if (!svg || !pupil) return;
+
+    pupil.classList.add('tracking');
+
+    function handlePointerMove(e: PointerEvent) {
+      const rect = svg!.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) return;
+      const scaleX = VIEW / rect.width;
+      const scaleY = VIEW / rect.height;
+      const px = (e.clientX - rect.left) * scaleX;
+      const py = (e.clientY - rect.top) * scaleY;
+      const dx = px - EYE.x;
+      const dy = py - EYE.y;
+      const dist = Math.hypot(dx, dy) || 1;
+      // Ease off the deflection for a cursor very close to the eye, so it
+      // doesn't jitter wildly when the pointer is right on top of it.
+      const reach = Math.min(1, dist / (PUPIL_MAX_OFFSET * 4));
+      const offsetX = (dx / dist) * PUPIL_MAX_OFFSET * reach;
+      const offsetY = (dy / dist) * PUPIL_MAX_OFFSET * reach;
+      pupil!.setAttribute('cx', String(EYE.x + offsetX));
+      pupil!.setAttribute('cy', String(EYE.y + offsetY));
+    }
+
+    window.addEventListener('pointermove', handlePointerMove);
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      pupil.classList.remove('tracking');
+      pupil.setAttribute('cx', String(EYE.x));
+      pupil.setAttribute('cy', String(EYE.y));
+    };
+  }, [isPlaying]);
+
   return (
     <div className="metronome-visual" style={{ '--band-color': bandInfo.color, '--band-glow': bandInfo.glow } as React.CSSProperties}>
       <canvas ref={canvasRef} className="metronome-waveform" aria-hidden="true" />
-      <svg viewBox={`0 0 ${VIEW} ${VIEW}`} className="metronome-svg" role="img" aria-label="Mindful Metronome visual">
+      <svg
+        ref={svgRef}
+        viewBox={`0 0 ${VIEW} ${VIEW}`}
+        className="metronome-svg"
+        role="img"
+        aria-label="Mindful Metronome visual"
+      >
         <path
           d={`M ${PIVOT.x} 48 L ${BASE_RIGHT.x} ${BASE_RIGHT.y} L ${BASE_LEFT.x} ${BASE_LEFT.y} Z`}
           className="pyramid-outline"

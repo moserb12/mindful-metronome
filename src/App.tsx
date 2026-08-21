@@ -20,7 +20,10 @@ export default function App() {
         </p>
       </header>
 
-      <main className="metronome-stage">
+      <main
+        className="metronome-stage"
+        style={{ '--band-color': bandInfo.color, '--band-glow': bandInfo.glow } as React.CSSProperties}
+      >
         <MetronomeVisual
           isPlaying={engine.isPlaying}
           band={engine.band}
@@ -35,10 +38,10 @@ export default function App() {
         />
 
         <div className="stage-readout">
-          <span className="state-badge" style={{ '--badge-color': bandInfo.color } as React.CSSProperties}>
+          <span className="state-badge">
             {bandInfo.label} · {bandInfo.blurb}
           </span>
-          <button type="button" className="play-toggle" onClick={engine.toggle}>
+          <button type="button" className={`play-toggle ${engine.isPlaying ? 'playing' : ''}`} onClick={engine.toggle}>
             {engine.isPlaying ? '❚❚ Pause' : '▶ Begin'}
           </button>
         </div>

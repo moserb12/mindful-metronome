@@ -3,6 +3,89 @@
 This file is read automatically by Claude Code at the start of every session
 in this repo. Keep it up to date as decisions get made.
 
+## Status update — "quantum organic harmonic" visual pass
+
+The builder asked for a full visual pass with a specific feel — "quantum
+organic harmonic," clean modern design principles, subtle micro-animations
+throughout so it feels alive and responsive — plus one concrete feature:
+the eye tracking the mouse cursor when the pendulum isn't moving. All of
+`src/index.css` was touched; nothing structural changed (no new
+components, no new dependencies), so this is additive polish, not a
+rewrite.
+
+**A shared motion system, not ad hoc transitions.** New tokens in `:root`:
+`--ease-harmonic` (a gentle overshoot/spring curve — `cubic-bezier(0.34,
+1.56, 0.64, 1)` — for anything the user directly touches: buttons, chips,
+the tempo weight) and `--ease-soft` (a plain organic ease-out for
+ambient/idle motion that should never call attention to itself), plus a
+`--dur-fast/base/slow` scale. Every transition/animation added in this
+pass draws from these same few values so hovers, presses, and idle drifts
+read as one consistent instrument rather than a pile of unrelated CSS —
+that consistency IS the "clean modern design principles" part, more than
+any individual effect.
+
+**Ambient/idle motion (the "alive" part):**
+- `body::before` — the nebula background gradients now drift almost
+  imperceptibly (`nebula-drift`, 48s, translate + slight scale) instead of
+  sitting static.
+- `.eye-outer`/`.eye-iris` — a slow breathing scale (`eye-breathe`, 5.5s),
+  the iris slightly out of phase with the outer ring (`animation-delay:
+  -1.8s`) so it doesn't read as one mechanical unit.
+- `.pyramid-outline` — a slow glow pulse (`pyramid-breathe`, 7s) using
+  `--band-glow`, so even the outline itself feels like it's breathing with
+  the current brainwave band.
+- `.play-toggle.playing` — a slow heartbeat-style box-shadow pulse
+  (`play-pulse`, 2.4s) using the band glow, only while actually playing —
+  deliberately calm, not an alert.
+- Panels (`.control-panel`, `.visualizer-panel`, `.metronome-visual`,
+  `.hero-header`, `.stage-readout`) each rise/fade in on mount
+  (`panel-rise`) with staggered `animation-delay`s (0s → 0.32s) for a
+  cascading "the instrument comes to life" load sequence, not everything
+  appearing at once.
+
+**Interactive micro-transitions:** every chip/button (`preset-chip`,
+`ear-mode-btn`, `visualizer-mode-toggle button`, `practice-toggle`) now
+lifts slightly on hover and compresses on `:active`, using
+`--ease-harmonic`. Range slider thumbs scale up on hover/active with a
+matching glow boost. `select` elements pick up a hover border tint. A
+global `:focus-visible` outline (band-colored) was added for keyboard
+navigation — genuinely missing before this pass.
+
+**Eye tracks the cursor when idle** (`MetronomeVisual.tsx`): a second,
+separate `useEffect` from the swing-driven one, active only while
+`!isPlaying`. Listens on `window` (not just while hovering the visual, so
+it reads as "aware," not as a hover effect), converts the cursor's screen
+position into the SVG's viewBox coordinate space via
+`getBoundingClientRect()`, and offsets the pupil toward it — with a
+`reach` falloff so a cursor very close to the eye doesn't cause jittery
+extreme deflection. The two pupil-driving effects (this one, and the
+swing-driven one added earlier) are mutually exclusive by construction —
+exactly one is ever "live" depending on `isPlaying` — so they never fight
+over the pupil's position. A `.eye-pupil.tracking` CSS class adds a
+`transition: cx/cy` ONLY while idle-tracking; it's deliberately never
+applied during play, where cx/cy already update every animation frame and
+a CSS transition would just make the pupil perpetually lag behind the
+beat instead of syncing crisply — see the swing-loop's own comment for why
+that distinction matters.
+
+**Shared theme scope, cleaned up:** `--band-color`/`--band-glow` are now
+set once on `.metronome-stage` in `App.tsx` (previously only set locally
+on `.metronome-visual`), so the play button, state badge, and both panels
+can reference the current band's color without needing it threaded in as
+a prop everywhere. `.state-badge`'s old one-off `--badge-color` local
+variable was removed in favor of just using the shared `--band-color`.
+
+**Reduced motion:** every animation added in this pass (nebula drift, eye
+breathe, pyramid glow, play-pulse, panel-rise, the pupil-tracking
+transition) is disabled under `prefers-reduced-motion: reduce` — same
+policy this app already held for the neuron pulse.
+
+Verified: `tsc` clean, 13/13 tests still passing, build succeeds (54KB
+gzip JS, only +0.86KB CSS gzipped for the whole pass), and a live
+Playwright pass confirmed the pupil moves toward the cursor in both
+tested directions, `.tracking` correctly disengages the instant playback
+starts, and the `.playing` pulse class applies — zero console errors.
+
 ## Status update — tempo weight on the rod + background-tab resilience
 
 Two more from the same conversation as the smoothness/eye-tracking fixes
