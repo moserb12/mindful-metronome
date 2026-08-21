@@ -3,6 +3,66 @@
 This file is read automatically by Claude Code at the start of every session
 in this repo. Keep it up to date as decisions get made.
 
+## Status update — the REAL eye/arm inversion bug (corrects the section below)
+
+The builder reported, after the CSS→native-SVG-attribute fix documented
+below shipped: "The eye is still looking the wrong way." That fix was real
+but was not the actual bug — it fixed a genuine cross-browser CSS/SVG
+transform inconsistency, but the pupil and arm had been agreeing with each
+other on a WRONG angle the whole time, so the self-consistency check that
+"verified" it (pupil offset direction agrees with arm swing direction on
+100% of frames) passed for the wrong reason: both were computed from the
+same buggy formula, so of course they agreed with each other.
+
+**Real root cause, in `MetronomeVisual.tsx`'s `angleToward()`:** the
+function computed `atan2(dx, dy)` to get the degrees to feed the arm's
+`rotate(deg, cx, cy)` SVG transform. That's the wrong sign. SVG's
+`rotate(a, cx, cy)` applies the real 2D rotation matrix `x' = cx + dx·cos(a)
+− dy·sin(a)`, `y' = cy + dx·sin(a) + dy·cos(a)` relative to the pivot.
+Solving that matrix for a target `(dx, dy)` starting from a straight-down
+vector gives `atan2(-dx, dy)`, not `atan2(dx, dy)` — the original formula
+silently rendered the arm mirrored (`LEFT_ANGLE` swung the tip to the
+RIGHT corner) from the very first version of this component, and the
+pupil's tip-position formula had the matching sign error, so it mirrored
+right along with it.
+
+**How this was verified, since "I did the math and it looks right" is
+exactly how the original bug shipped:** three independent checks, not one.
+(1) Hand-derived the rotation matrix and confirmed the old formula's
+`LEFT_ANGLE`, run through that matrix, lands the tip at `BASE_RIGHT`'s
+exact coordinates. (2) Built an isolated test SVG with no dependency on
+this app's code and read the browser's own `getCTM()` (Current
+Transformation Matrix) as ground truth — confirmed `rotate(+30.96, 200,
+92)` lands at `BASE_LEFT`, `rotate(-30.96, ...)` at `BASE_RIGHT`, matching
+the corrected formula. (3) Live in the running app: intercepted
+`OscillatorNode.start(when)` and the `AudioContext` constructor to
+correlate each tick's real scheduled AudioContext-time against the arm's
+rendered angle at that same audio-clock instant (not wall-clock — the
+scheduler's 3-second background-tab lookahead means pan gets assigned up
+to 3 real seconds before a tick sounds, so an earlier wall-clock-based
+version of this same test gave confusing, contradictory results before
+that was caught). Result: the true geometric tip side agreed with the
+actual `StereoPannerNode.pan` side on every event checked, sub-10ms
+audio-clock lag. **Fix:** `angleToward()` now returns `atan2(-dx, dy)`,
+and the pupil tip-position formula's `tipX` uses `PIVOT.x - ARM_LENGTH *
+Math.sin(angleRad)` (was `+`) to match.
+
+**The "match/opposite tick-ear is flipped" complaint, filed in the same
+message, turned out to be a symptom of this exact bug, not a separate one.**
+`resolveTickPan()` (`binauralEngine.ts`) and the drone-balance `panValue`
+(`updateDroneBalance`) were never derived from `angleToward()` or the
+rendered angle at all — both come straight from `segment.fromSide`/
+`toSide`, plain `'left'`/`'right'` strings computed independently of the
+visual. The audio was correct the entire time; the builder was judging
+"does the tick match the side the pendulum LOOKS like it's on" against a
+visual that was mirrored, so it looked flipped even though `MATCH` mode
+was already doing exactly what `MATCH` should do (tick fires on the same
+side the tip visually arrives at). **`resolveTickPan()` was NOT changed** —
+doing so would have introduced a real bug now that the visual is fixed.
+Confirmed by the same audio-clock-correlated test above: `MATCH` mode's
+pan side agreed with the arm's now-correct true tip side on 4/4 checked
+events.
+
 ## Status update — "quantum organic harmonic" visual pass
 
 The builder asked for a full visual pass with a specific feel — "quantum
@@ -139,6 +199,11 @@ its last value and resumes smoothly (no drift, since it's recomputed from
 elapsed time) the instant the tab is foregrounded again.
 
 ## Status update — pendulum smoothness + eye-tracking inversion, real bugs fixed
+
+⚠️ **The eye-inversion fix below was incomplete — see the status update at
+the top of this file for the real root cause (a trig sign error in
+`angleToward()`) and the fix that actually resolved it.** The smoothness
+fix below is unaffected and still stands as documented.
 
 The builder reported the pendulum wasn't swinging smoothly and the eye
 tracking looked inverted. Both were real, and both are fixed — this is not

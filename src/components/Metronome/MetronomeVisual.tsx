@@ -31,11 +31,26 @@ const BASE_LEFT = { x: 62, y: 322 };
 const BASE_RIGHT = { x: 338, y: 322 };
 const EYE = { x: 200, y: 224 };
 
+/**
+ * Degrees to feed the arm's `rotate(deg, cx, cy)` SVG transform so that a
+ * line initially pointing straight down from `from` ends up pointing at
+ * `to`. This is NOT simply `atan2(dx, dy)` — that was the original,
+ * WRONG version of this function, and it silently rendered the arm
+ * mirrored (LEFT_ANGLE actually swung the tip to the RIGHT corner) from
+ * the very first version of this component. `rotate(a, cx, cy)` applies
+ * the real 2D rotation matrix x' = dx·cos(a) − dy·sin(a), y' =
+ * dx·sin(a) + dy·cos(a) relative to the pivot; solving that for a target
+ * (dx, dy) starting from a straight-down vector (0, r) gives
+ * `atan2(-dx, dy)`, not `atan2(dx, dy)`. Verified by hand against the
+ * real matrix (not just against this app's own other numbers, which is
+ * how the mirrored version passed self-consistency checks for so long):
+ * plugging the old formula's LEFT_ANGLE into the real rotation matrix
+ * landed the tip at BASE_RIGHT's exact coordinates, and vice versa.
+ */
 function angleToward(from: { x: number; y: number }, to: { x: number; y: number }): number {
-  // Degrees, 0 = straight down, positive = toward the right.
   const dx = to.x - from.x;
   const dy = to.y - from.y;
-  return (Math.atan2(dx, dy) * 180) / Math.PI;
+  return (Math.atan2(-dx, dy) * 180) / Math.PI;
 }
 
 const LEFT_ANGLE = angleToward(PIVOT, BASE_LEFT);
@@ -244,9 +259,15 @@ export function MetronomeVisual({
       // cx/cy directly (rather than a CSS translate) sidesteps the same
       // transform-box ambiguity noted above — cx/cy are always plain SVG
       // user units, so this can never come out mirrored or scaled wrong.
+      //
+      // tipX uses MINUS sin(angleRad) — this must match the real SVG
+      // rotation matrix the arm itself is rendered with (x' = dx·cos(a) −
+      // dy·sin(a), see angleToward()'s doc comment above), not the more
+      // "obvious" plus sign. Getting this backwards is exactly what made
+      // the eye look mirrored from the arm for two rounds of review.
       if (pupilRef.current) {
         const angleRad = (totalAngle * Math.PI) / 180;
-        const tipX = PIVOT.x + ARM_LENGTH * Math.sin(angleRad);
+        const tipX = PIVOT.x - ARM_LENGTH * Math.sin(angleRad);
         const tipY = PIVOT.y + ARM_LENGTH * Math.cos(angleRad);
         const dx = tipX - EYE.x;
         const dy = tipY - EYE.y;
