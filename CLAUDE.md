@@ -3,6 +3,148 @@
 This file is read automatically by Claude Code at the start of every session
 in this repo. Keep it up to date as decisions get made.
 
+## Status update — "delight" pass: persistence, timed sessions, PWA, and more
+
+The builder asked what it would take to make the app "feel really truly
+delightful to use." Two research passes surveyed the existing codebase for
+real gaps (confirmed: zero persistence, zero keyboard handling, zero PWA
+infra, zero haptics — everything reset on every reload), then the builder
+picked nine features from a curated list and confirmed three product
+decisions before implementation. All nine are built, individually verified
+live in a real browser (not just unit-tested), and shipped in one pass.
+
+**Confirmed decisions, load-bearing for the implementation below:**
+- **Manual Pause/Stop always stays instant.** The graceful fade+chime+glow
+  is reserved for a timed session ending *naturally* — never a deliberate
+  stop. `stopPlaybackInternal()` (the actual teardown) and `stop()` (the
+  public, manual version, which ALSO immediately resets session state to
+  `'idle'`) are deliberately two different functions in
+  `useMetronomeEngine.ts` so this distinction can't blur.
+- **Shareable links carry only "core tuning"**: carrier Hz, beat Hz, BPM,
+  noise type. A recipient's own volumes/tick sound/tick-ear mode are never
+  overwritten by opening someone else's link.
+- **Custom presets save a full snapshot** (every setting) — a preset is
+  private to the browser that saved it, never shared via a link, so
+  there's no reason to leave anything out.
+
+**1. Persistence** (`src/storage/settingsStorage.ts`) — one localStorage
+blob, validated FIELD BY FIELD on load so one corrupt/out-of-range value
+never invalidates the whole saved config. `useMetronomeEngine.ts`'s
+`resolveInitialSettings()` merges, PER FIELD, in this exact order:
+hardcoded defaults < saved settings < URL query params (see §8) — computed
+once via a lazy `useState` initializer, not on every render. Saves are
+debounced 400ms (range inputs fire `onChange` continuously while dragged).
+
+**2. Timed sessions + graceful fade-out + session-end moment** — the
+largest piece, replacing `.practice-section`'s old "being built next"
+placeholder with a real `SessionTimer.tsx` (duration chips: 10/20/30/
+Open-ended + live countdown). Deliberately reuses the SAME single Begin/
+Pause button rather than adding a second one — picking a duration just
+arms what happens next time it's pressed (or, if already playing, re-arms
+the countdown immediately from "now" — confirmed behavior for a mid-session
+duration change, not preserved-elapsed-time-against-a-new-total).
+- `computeSessionPhase(nowSec, sessionState)` in `useMetronomeEngine.ts` is
+  a **pure function**, modeled directly on the existing `computeSwingSegment`
+  ("derive current state from elapsed time against ONE fixed reference"),
+  not a naive `setInterval` countdown that could drift or double-fire.
+  Polled every 250ms; `active`/`fading`/`ended` transitions are each
+  guarded by a "has this threshold already passed and we haven't fired
+  yet" boolean, robust to poll timing rather than needing an exact instant.
+- `BinauralEngine.beginSessionFadeOut()`/`playClosingChime()`
+  (`binauralEngine.ts`) — the fade ramps `masterGain` directly via Web
+  Audio automation, **never touching `params.masterVolume`** (the slider's
+  source of truth), so the master fader is exactly where the user left it
+  once a session ends. The chime is 3 oscillators (root/fifth/octave off
+  the current carrierHz) routed to `analyser` — the SAME point drone/tick/
+  noise feed into, upstream of `masterGain` — so it rides the same fade
+  instead of sounding after everything else has gone quiet.
+- ⚠️ **Found and fixed a real bug while building this**: `BinauralEngine.
+  stop()` never reset `masterGain` before this pass. A session that faded
+  it to ~0 and then stopped would leave the NEXT `start()` beginning
+  SILENTLY — nothing else ever re-primed that GainNode. `stop()` now
+  unconditionally resets it to `params.masterVolume`. Caught and confirmed
+  via an instrumented live-browser test reading the actual
+  `GainNode.gain.value` through a full session lifecycle (not just unit
+  tests) — see the verification note below.
+- Also added `cancelSessionFade()` for the edge case of re-arming a
+  session (§ duration change) while a PREVIOUS session's fade-out ramp is
+  still in flight — without it, stale automation could keep silently
+  pulling volume toward zero underneath a session that now thinks it's
+  freshly active.
+
+**3. Keyboard shortcuts** (`hooks/useKeyboardShortcuts.ts`) — Space (play/
+pause), ArrowUp/Down (±1 BPM), 1-5 (built-in band presets). Never fires
+with a modifier key held, and never fires while a range slider/select/
+text field has focus — verified live that a focused BPM slider's own
+native arrow-key behavior isn't double-nudged by our own handler on top.
+
+**4. Installable PWA** — `public/manifest.json` + hand-rolled
+`public/sw.js` (no `vite-plugin-pwa`): cache-first for `/assets/*`
+(Vite's hashed, content-addressed output — safe forever, any change gets
+a new filename), network-first-with-cache-fallback for navigation (avoids
+a stale-forever shell). Icons are generated, not hand-drawn or AI-
+generated: `scripts/generate-icons.mjs` uses `@resvg/resvg-js` (a
+**devDependency only**, never shipped in the runtime bundle — no system
+SVG rasterizer like rsvg-convert/imagemagick exists in a typical dev
+environment) to rasterize the SAME pyramid+eye glyph as `favicon.svg` into
+192/512/maskable-512/apple-touch-icon-180, so the icon family can never
+visually drift from the mascot. Verified live: manifest fetches and
+parses, every icon URL resolves, the service worker reaches `active`,
+`/assets/*` files get cached on real navigation, and — the real test — a
+reload with the browser context set fully offline still renders the app
+shell correctly from cache.
+
+**5. Haptics** (`navigator.vibrate(15)` per tick) — fires from the exact
+same delayed-to-real-sounding-time `setTimeout` callback that already
+drives the wiggle/neuron-pulse visual, so it's guaranteed in sync with
+those without inventing a second timing path. Feature-detected (`'vibrate'
+in navigator`) both for firing and for whether the toggle UI renders at
+all — desktop simply doesn't get a dead control. Defaults ON wherever
+supported (opt-out, matching every other feedback channel in this app),
+persisted per §1.
+
+**6. Interactive visual flourishes** (`MetronomeVisual.tsx`) — three small,
+purely additive taps: the pyramid outline pings (outward glow, layered on
+top of its existing ambient breathing — same "one-shot on top of ambient
+motion" idea as the tick "wiggle"), a neuron node's connecting line
+highlights on hover/tap, the eye's outer ring does a quick squash-and-
+return "wink." None touch the rAF loop or the pupil-driving effects
+(different elements/properties entirely). ⚠️ **Found a real tappability
+bug while verifying this live**: the pyramid `<path>` has `fill: none`, so
+by default only the 1.5px STROKE LINE was actually clickable — a tap
+anywhere in the visible triangle's interior silently missed. Fixed with
+`pointer-events: all`. Caught only because live-browser verification used
+`elementFromPoint()` to confirm what was ACTUALLY receiving the click,
+not just that a class toggled in isolation.
+
+**7. Shareable links** (`src/urlState.ts`) — `?c=&b=&t=&n=` query params,
+decoded/validated per-field (a malformed or partial link degrades
+gracefully, never throws), merged into initial state per the order in §1.
+Once adopted, `history.replaceState()` cleans the address bar so the
+config flows into the normal debounced-save path like any other change. A
+new "Copy Link" button in `ControlPanel.tsx` always reads LIVE current
+state via `paramsRef`, never a stale snapshot from render time.
+
+**8. Custom saved presets** (`data/customPresets.ts`,
+`storage/customPresetsStorage.ts`, `hooks/useCustomPresets.ts`) — own
+storage key, separate from §1's settings blob (a growing collection, not
+a scalar). `useMetronomeEngine.ts`'s `applyPreset()` was generalized from
+its old 3-field (`carrierHz`/`beatHz`/`bpm`) form into accepting the full
+`ApplyablePresetFields` superset, applying whichever fields are present —
+one shared code path for both the 5 built-in band presets and custom ones.
+
+**Verification discipline for this whole pass**: every feature was
+confirmed in a real Playwright-driven browser, not just via unit tests —
+including two live-browser bugs (the `stop()` masterGain reset, the
+pyramid's hit-testing) that unit tests alone would never have caught,
+since both are about the REAL rendered/audio DOM state, not pure function
+logic. For the timed-session feature specifically, `SESSION_FADE_DURATION_
+SEC` and a test-only short duration chip were TEMPORARILY shrunk to verify
+the full fade→chime→end→bloom→reset-to-idle lifecycle in real time (an
+instrumented `GainNode.gain.value` read confirmed the actual Web Audio
+automation, not just CSS class changes), then reverted — confirmed via a
+byte-identical rebuild hash before committing.
+
 ## Status update — master volume + selectable noise shields (pink/white/brown)
 
 Two additions to the mixer, both in `ControlPanel.tsx` / `binauralEngine.ts`:

@@ -1,5 +1,18 @@
-import { BANDS, PRESETS, classifyBeatFrequency, type MetronomePreset } from '../../data/bands';
+import { useState } from 'react';
+import {
+  BANDS,
+  MAX_BEAT_HZ,
+  MAX_BPM,
+  MAX_CARRIER_HZ,
+  MIN_BEAT_HZ,
+  MIN_BPM,
+  MIN_CARRIER_HZ,
+  PRESETS,
+  classifyBeatFrequency,
+} from '../../data/bands';
 import { NOISE_SHIELDS, NOISE_SHIELD_ORDER } from '../../data/noiseShields';
+import type { CustomPreset } from '../../data/customPresets';
+import type { ApplyablePresetFields } from '../../hooks/useMetronomeEngine';
 import type { NoiseType, TickEarMode, TickSound } from '../../audio/binauralEngine';
 
 interface ControlPanelProps {
@@ -14,6 +27,7 @@ interface ControlPanelProps {
   noiseType: NoiseType;
   panModulationDepth: number;
   tickEarMode: TickEarMode;
+  hapticsEnabled: boolean;
   onSetCarrierHz: (hz: number) => void;
   onSetBeatHz: (hz: number) => void;
   onSetBpm: (bpm: number) => void;
@@ -23,7 +37,127 @@ interface ControlPanelProps {
   onSetNoiseType: (type: NoiseType) => void;
   onSetPanModulationDepth: (depth: number) => void;
   onSetTickEarMode: (mode: TickEarMode) => void;
-  onApplyPreset: (preset: MetronomePreset) => void;
+  onSetHapticsEnabled: (enabled: boolean) => void;
+  onApplyPreset: (preset: ApplyablePresetFields) => void;
+  getShareableLink: () => string;
+  customPresets: CustomPreset[];
+  onSaveCustomPreset: (name: string) => void;
+  onDeleteCustomPreset: (id: CustomPreset['id']) => void;
+}
+
+/** §9 custom presets — a second chip row beneath the built-in Presets,
+ * reusing the same `.preset-chip` visual. Unlike built-in presets, each
+ * custom chip gets a small delete affordance, and there's a "+ Save
+ * preset" chip that opens a minimal inline name field — no modal, matching
+ * the app's lightweight feel elsewhere (e.g. the noise-type picker). */
+function CustomPresetsRow({
+  customPresets,
+  onApplyPreset,
+  onSaveCustomPreset,
+  onDeleteCustomPreset,
+  chipColor,
+}: {
+  customPresets: CustomPreset[];
+  onApplyPreset: (preset: ApplyablePresetFields) => void;
+  onSaveCustomPreset: (name: string) => void;
+  onDeleteCustomPreset: (id: CustomPreset['id']) => void;
+  chipColor: string;
+}) {
+  const [naming, setNaming] = useState(false);
+  const [name, setName] = useState('');
+
+  function handleConfirmSave() {
+    onSaveCustomPreset(name);
+    setName('');
+    setNaming(false);
+  }
+
+  return (
+    <div className="custom-preset-row" style={{ '--chip-color': chipColor } as React.CSSProperties}>
+      {customPresets.map((preset) => (
+        <span key={preset.id} className="preset-chip custom-preset-chip">
+          <button type="button" className="custom-preset-apply" onClick={() => onApplyPreset(preset)}>
+            {preset.name}
+          </button>
+          <button
+            type="button"
+            className="custom-preset-delete"
+            aria-label={`Delete preset "${preset.name}"`}
+            onClick={() => onDeleteCustomPreset(preset.id)}
+          >
+            ×
+          </button>
+        </span>
+      ))}
+      {naming ? (
+        <span className="preset-chip custom-preset-naming">
+          <input
+            autoFocus
+            className="custom-preset-name-input"
+            value={name}
+            placeholder="Preset name"
+            maxLength={40}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') handleConfirmSave();
+              if (e.key === 'Escape') {
+                setNaming(false);
+                setName('');
+              }
+            }}
+          />
+          <button type="button" className="custom-preset-confirm" onClick={handleConfirmSave}>
+            Save
+          </button>
+        </span>
+      ) : (
+        <button type="button" className="preset-chip custom-preset-add" onClick={() => setNaming(true)}>
+          + Save preset
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** "Copy Link" affordance for §8 shareable links — reads the live current
+ * setup fresh on every click via `getShareableLink` (never a stale
+ * snapshot), copies it via the Clipboard API, and falls back to showing
+ * the raw link in a selectable field for browsers/contexts where
+ * `navigator.clipboard` is unavailable or denied (e.g. non-HTTPS, some
+ * embedded webviews) — so the feature always has a way to actually get
+ * the link out, never a silent failure. */
+function CopyLinkButton({ getShareableLink }: { getShareableLink: () => string }) {
+  const [status, setStatus] = useState<'idle' | 'copied' | 'fallback'>('idle');
+  const [link, setLink] = useState('');
+
+  async function handleClick() {
+    const url = getShareableLink();
+    try {
+      await navigator.clipboard.writeText(url);
+      setStatus('copied');
+      setTimeout(() => setStatus('idle'), 2000);
+    } catch {
+      setLink(url);
+      setStatus('fallback');
+    }
+  }
+
+  return (
+    <div className="copy-link-row">
+      <button type="button" className="copy-link-btn" onClick={handleClick}>
+        {status === 'copied' ? 'Link copied!' : 'Copy link'}
+      </button>
+      {status === 'fallback' && (
+        <input
+          className="copy-link-fallback"
+          readOnly
+          value={link}
+          onFocus={(e) => e.currentTarget.select()}
+          aria-label="Shareable link"
+        />
+      )}
+    </div>
+  );
 }
 
 const TICK_SOUND_OPTIONS: { value: TickSound; label: string }[] = [
@@ -59,6 +193,7 @@ export function ControlPanel({
   noiseType,
   panModulationDepth,
   tickEarMode,
+  hapticsEnabled,
   onSetCarrierHz,
   onSetBeatHz,
   onSetBpm,
@@ -68,10 +203,19 @@ export function ControlPanel({
   onSetNoiseType,
   onSetPanModulationDepth,
   onSetTickEarMode,
+  onSetHapticsEnabled,
   onApplyPreset,
+  getShareableLink,
+  customPresets,
+  onSaveCustomPreset,
+  onDeleteCustomPreset,
 }: ControlPanelProps) {
   const band = classifyBeatFrequency(beatHz);
   const activeShield = NOISE_SHIELDS[noiseType];
+  // Feature-detected here (not passed as a prop) since it's a pure browser
+  // capability check, not app state — desktop browsers simply don't have
+  // this, so the whole control-group is omitted rather than shown disabled.
+  const hapticsSupported = typeof navigator !== 'undefined' && 'vibrate' in navigator;
 
   return (
     <div className="control-panel">
@@ -92,6 +236,15 @@ export function ControlPanel({
             </button>
           ))}
         </div>
+        <div className="mixer-divider" />
+        <CustomPresetsRow
+          customPresets={customPresets}
+          onApplyPreset={onApplyPreset}
+          onSaveCustomPreset={onSaveCustomPreset}
+          onDeleteCustomPreset={onDeleteCustomPreset}
+          chipColor={BANDS[band].color}
+        />
+        <CopyLinkButton getShareableLink={getShareableLink} />
       </div>
 
       <div className="control-group">
@@ -101,8 +254,8 @@ export function ControlPanel({
         </div>
         <input
           type="range"
-          min={80}
-          max={500}
+          min={MIN_CARRIER_HZ}
+          max={MAX_CARRIER_HZ}
           step={1}
           value={carrierHz}
           onChange={(e) => onSetCarrierHz(Number(e.target.value))}
@@ -118,8 +271,8 @@ export function ControlPanel({
         </div>
         <input
           type="range"
-          min={0.5}
-          max={50}
+          min={MIN_BEAT_HZ}
+          max={MAX_BEAT_HZ}
           step={0.5}
           value={beatHz}
           onChange={(e) => onSetBeatHz(Number(e.target.value))}
@@ -131,7 +284,14 @@ export function ControlPanel({
           <span className="control-label">Tempo</span>
           <span className="control-value">{bpm} BPM</span>
         </div>
-        <input type="range" min={30} max={160} step={1} value={bpm} onChange={(e) => onSetBpm(Number(e.target.value))} />
+        <input
+          type="range"
+          min={MIN_BPM}
+          max={MAX_BPM}
+          step={1}
+          value={bpm}
+          onChange={(e) => onSetBpm(Number(e.target.value))}
+        />
         <select className="tick-sound-select" value={tickSound} onChange={(e) => onSetTickSound(e.target.value as TickSound)}>
           {TICK_SOUND_OPTIONS.map((opt) => (
             <option key={opt.value} value={opt.value}>
@@ -241,6 +401,22 @@ export function ControlPanel({
           ))}
         </div>
       </div>
+
+      {hapticsSupported && (
+        <div className="control-group">
+          <span className="control-label">Haptics</span>
+          <button
+            type="button"
+            className={`haptics-toggle ${hapticsEnabled ? 'active' : ''}`}
+            style={{ '--chip-color': BANDS[band].color } as React.CSSProperties}
+            aria-pressed={hapticsEnabled}
+            onClick={() => onSetHapticsEnabled(!hapticsEnabled)}
+          >
+            {hapticsEnabled ? 'Pulse felt on every tick' : 'Off'}
+          </button>
+          <p className="control-hint">A brief, subtle vibration on every tick — a bilateral pulse you can actually feel.</p>
+        </div>
+      )}
     </div>
   );
 }

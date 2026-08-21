@@ -1,14 +1,41 @@
 import { useState } from 'react';
 import { useMetronomeEngine } from './hooks/useMetronomeEngine';
+import { useCustomPresets } from './hooks/useCustomPresets';
+import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { MetronomeVisual } from './components/Metronome/MetronomeVisual';
 import { AcousticVisualizer } from './components/Metronome/AcousticVisualizer';
 import { ControlPanel } from './components/Metronome/ControlPanel';
+import { SessionTimer } from './components/Metronome/SessionTimer';
 import { BANDS } from './data/bands';
 
 export default function App() {
   const engine = useMetronomeEngine();
+  const customPresetsHook = useCustomPresets();
   const [practiceOpen, setPracticeOpen] = useState(false);
   const bandInfo = BANDS[engine.band];
+
+  function handleSaveCustomPreset(name: string) {
+    customPresetsHook.savePreset(name, {
+      carrierHz: engine.carrierHz,
+      beatHz: engine.beatHz,
+      bpm: engine.bpm,
+      masterVolume: engine.masterVolume,
+      droneVolume: engine.droneVolume,
+      tickVolume: engine.tickVolume,
+      noiseVolume: engine.noiseVolume,
+      noiseType: engine.noiseType,
+      tickSound: engine.tickSound,
+      panModulationDepth: engine.panModulationDepth,
+      tickEarMode: engine.tickEarMode,
+    });
+  }
+
+  useKeyboardShortcuts({
+    toggle: engine.toggle,
+    bpm: engine.bpm,
+    onSetBpm: engine.setBpm,
+    onApplyPreset: engine.applyPreset,
+  });
 
   return (
     <div className="app-shell">
@@ -21,7 +48,7 @@ export default function App() {
       </header>
 
       <main
-        className="metronome-stage"
+        className={`metronome-stage ${engine.sessionPhase === 'ended' ? 'session-ending' : ''}`}
         style={{ '--band-color': bandInfo.color, '--band-glow': bandInfo.glow } as React.CSSProperties}
       >
         <MetronomeVisual
@@ -60,6 +87,7 @@ export default function App() {
           noiseType={engine.noiseType}
           panModulationDepth={engine.panModulationDepth}
           tickEarMode={engine.tickEarMode}
+          hapticsEnabled={engine.hapticsEnabled}
           onSetCarrierHz={engine.setCarrierHz}
           onSetBeatHz={engine.setBeatHz}
           onSetBpm={engine.setBpm}
@@ -69,7 +97,12 @@ export default function App() {
           onSetNoiseType={engine.setNoiseType}
           onSetPanModulationDepth={engine.setPanModulationDepth}
           onSetTickEarMode={engine.setTickEarMode}
+          onSetHapticsEnabled={engine.setHapticsEnabled}
           onApplyPreset={engine.applyPreset}
+          getShareableLink={engine.getShareableLink}
+          customPresets={customPresetsHook.customPresets}
+          onSaveCustomPreset={handleSaveCustomPreset}
+          onDeleteCustomPreset={customPresetsHook.deletePreset}
         />
       </main>
 
@@ -81,10 +114,17 @@ export default function App() {
         {practiceOpen && (
           <div className="practice-body">
             <p>
-              A structured, 18-level hand/foot rhythm-timing program lives here — start and stop it independently of
-              the metronome above, any time you want a guided practice instead of free-flowing with the drone.
+              Set a session length and the drone will fade gracefully with a soft closing tone when your time is up
+              — instead of an abrupt stop, or having to remember to come back and pause it yourself.
             </p>
-            <p className="practice-coming-soon">This section is being built next — check back soon.</p>
+            <SessionTimer
+              sessionDurationMinutes={engine.sessionDurationMinutes}
+              sessionPhase={engine.sessionPhase}
+              sessionRemainingSec={engine.sessionRemainingSec}
+              isPlaying={engine.isPlaying}
+              onSetSessionDurationMinutes={engine.setSessionDurationMinutes}
+              chipColor={bandInfo.color}
+            />
           </div>
         )}
       </section>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { computeSwingSegment, type SwingState } from './useMetronomeEngine';
+import { computeSessionPhase, computeSwingSegment, type SessionState, type SwingState } from './useMetronomeEngine';
 
 // ============================================================================
 // computeSwingSegment is the fix for a real bug: an earlier version only
@@ -76,5 +76,69 @@ describe('computeSwingSegment', () => {
     const seg = computeSwingSegment(0.75, fastRef);
     expect(seg.fromTimeSec).toBe(0.5);
     expect(seg.toTimeSec).toBe(1);
+  });
+});
+
+// ============================================================================
+// computeSessionPhase — same "derive current state from elapsed time
+// against one fixed reference" model as computeSwingSegment above, applied
+// to a timed session's active/fading/ended lifecycle. Session:
+// startTimeSec=100, durationSec=600 (10 min), fadeDurationSec=8, so the
+// fade window is [692, 700) and 'ended' begins exactly at t=700.
+// ============================================================================
+
+describe('computeSessionPhase', () => {
+  const session: SessionState = { startTimeSec: 100, durationSec: 600, fadeDurationSec: 8 };
+
+  it('is active well before the fade window', () => {
+    const p = computeSessionPhase(400, session);
+    expect(p.phase).toBe('active');
+    expect(p.remainingSec).toBe(300);
+  });
+
+  it('is still active one second before the fade window opens', () => {
+    const p = computeSessionPhase(691, session);
+    expect(p.phase).toBe('active');
+  });
+
+  it('switches to fading exactly at the fade window boundary', () => {
+    const p = computeSessionPhase(692, session);
+    expect(p.phase).toBe('fading');
+    expect(p.remainingSec).toBe(8);
+  });
+
+  it('reports decreasing remainingSec partway through the fade', () => {
+    const p = computeSessionPhase(696, session);
+    expect(p.phase).toBe('fading');
+    expect(p.remainingSec).toBe(4);
+  });
+
+  it('is still fading one instant before the total duration elapses', () => {
+    const p = computeSessionPhase(699.9, session);
+    expect(p.phase).toBe('fading');
+  });
+
+  it('switches to ended exactly at the requested total duration', () => {
+    const p = computeSessionPhase(700, session);
+    expect(p.phase).toBe('ended');
+    expect(p.remainingSec).toBe(0);
+  });
+
+  it('stays ended (never goes negative) arbitrarily far past the end', () => {
+    const p = computeSessionPhase(5000, session);
+    expect(p.phase).toBe('ended');
+    expect(p.remainingSec).toBe(0);
+  });
+
+  it('is active at the exact start instant', () => {
+    const p = computeSessionPhase(100, session);
+    expect(p.phase).toBe('active');
+    expect(p.remainingSec).toBe(600);
+  });
+
+  it('handles a fade window as long as the whole session without going negative', () => {
+    const wholeSessionIsFade: SessionState = { startTimeSec: 0, durationSec: 5, fadeDurationSec: 5 };
+    expect(computeSessionPhase(0, wholeSessionIsFade).phase).toBe('fading');
+    expect(computeSessionPhase(5, wholeSessionIsFade).phase).toBe('ended');
   });
 });

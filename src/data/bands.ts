@@ -6,6 +6,18 @@
 // and preset numbers match that prototype's values.
 // ============================================================================
 
+// Shared numeric bounds for every control that can set carrier/beat/tempo —
+// the slider ranges in ControlPanel.tsx, the keyboard-shortcut BPM nudge,
+// the shareable-link decoder, and the custom-preset validator all clamp
+// against these SAME constants so the bounds can never drift out of sync
+// between files.
+export const MIN_CARRIER_HZ = 80;
+export const MAX_CARRIER_HZ = 500;
+export const MIN_BEAT_HZ = 0.5;
+export const MAX_BEAT_HZ = 50;
+export const MIN_BPM = 30;
+export const MAX_BPM = 160;
+
 export type BrainwaveBand = 'delta' | 'theta' | 'alpha' | 'beta' | 'gamma';
 
 export interface BandInfo {

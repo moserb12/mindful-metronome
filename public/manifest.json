@@ -1,0 +1,14 @@
+{
+  "name": "Mindful Metronome",
+  "short_name": "Metronome",
+  "description": "A steady, binaural pulse for flow states — free, and yours to use for as long as it helps.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#05050a",
+  "theme_color": "#05050a",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

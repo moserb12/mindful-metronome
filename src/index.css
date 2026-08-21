@@ -230,6 +230,13 @@ select:hover {
   stroke-width: 1.5;
   stroke-linejoin: round;
   animation: pyramid-breathe 7s var(--ease-soft) infinite;
+  cursor: pointer;
+  /* fill: none means nothing is "painted" in the triangle's interior, so
+     the default pointer-events (visiblePainted) would only let taps land
+     on the thin stroke line itself — `all` makes the whole triangle
+     tappable regardless of what's actually painted, which is what makes
+     this a reasonably sized, findable tap target rather than a sliver. */
+  pointer-events: all;
 }
 @keyframes pyramid-breathe {
   0%,
@@ -239,6 +246,26 @@ select:hover {
   50% {
     filter: drop-shadow(0 0 7px var(--band-glow, transparent));
   }
+}
+/* One-shot tap flourish, layered on top of the always-on breathing glow
+   above — same "layer a one-shot on top of ambient motion" idea already
+   used for the tick "wiggle" on the pendulum arm. A direct response to a
+   user's own tap (not idle/ambient looping), so — like .tempo-weight's
+   hover/active transforms — it's intentionally NOT disabled under
+   prefers-reduced-motion. */
+@keyframes pyramid-ping {
+  0% {
+    filter: drop-shadow(0 0 0 transparent);
+  }
+  35% {
+    filter: drop-shadow(0 0 22px var(--band-glow, rgba(167, 139, 250, 0.9)));
+  }
+  100% {
+    filter: drop-shadow(0 0 0 transparent);
+  }
+}
+.pyramid-outline.pyramid-ping {
+  animation: pyramid-ping 0.6s var(--ease-harmonic) 1;
 }
 
 .metronome-arm-line {
@@ -296,6 +323,27 @@ select:hover {
   transform-box: fill-box;
   transform-origin: center;
   animation: eye-breathe 5.5s var(--ease-soft) infinite;
+  cursor: pointer;
+}
+/* A quick squash-and-return "wink" on tap — touches only the outer ring's
+   own transform, never the pupil's cx/cy (those belong exclusively to the
+   swing/mouse-tracking effects in MetronomeVisual.tsx). A direct response
+   to a user's own tap, so — same reasoning as .pyramid-ping above —
+   intentionally not disabled under prefers-reduced-motion. */
+@keyframes eye-wink {
+  0%,
+  100% {
+    transform: scaleY(1);
+  }
+  40% {
+    transform: scaleY(0.15);
+  }
+  70% {
+    transform: scaleY(1.08);
+  }
+}
+.eye-outer.eye-wink {
+  animation: eye-wink 0.25s var(--ease-harmonic) 1;
 }
 .eye-iris {
   fill: none;
@@ -333,6 +381,25 @@ select:hover {
   animation: neuron-pulse-idle 3.4s ease-in-out infinite;
   transform-origin: center;
   transform-box: fill-box;
+  cursor: pointer;
+}
+/* Hovering/tapping a node highlights its own connecting line — entirely
+   separate from the tick-driven pulse above (different element, different
+   property: opacity/filter on the LINE, never the node circle's own
+   pulse animation), so the two can never conflict. Harmonic ease going
+   toward the highlighted state (something being touched), soft ease
+   releasing back down — same in/out asymmetry as the rest of the app's
+   interactive elements. */
+.neuron-connector {
+  transition: opacity var(--dur-base) var(--ease-soft), filter var(--dur-base) var(--ease-soft);
+}
+.neuron-connector-active {
+  /* SVG presentation attributes (the line's opacity={0.35} in JSX) sit at
+     the bottom of the cascade, below any CSS class selector — this
+     overrides it with no !important needed. */
+  opacity: 0.9;
+  filter: drop-shadow(0 0 4px var(--band-glow, rgba(167, 139, 250, 0.6)));
+  transition: opacity var(--dur-fast) var(--ease-harmonic), filter var(--dur-fast) var(--ease-harmonic);
 }
 .neuron-cluster .neuron-node {
   animation: neuron-pulse-tick 0.55s ease-out;
@@ -586,8 +653,120 @@ select:hover {
   color: var(--text-faint);
 }
 
+.custom-preset-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.custom-preset-chip {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 4px 4px 14px;
+}
+.custom-preset-apply {
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  padding: 0;
+}
+.custom-preset-apply:hover {
+  color: var(--chip-color, #a78bfa);
+}
+.custom-preset-delete {
+  border: none;
+  background: none;
+  color: var(--text-faint);
+  font-size: 0.95rem;
+  line-height: 1;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: color var(--dur-fast) var(--ease-soft), background var(--dur-fast) var(--ease-soft);
+}
+.custom-preset-delete:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.08);
+}
+.custom-preset-add {
+  cursor: pointer;
+  color: var(--text-faint);
+  border-style: dashed;
+}
+.custom-preset-add:hover {
+  color: var(--text);
+}
+.custom-preset-naming {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px 4px 12px;
+}
+.custom-preset-name-input {
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--surface-border);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.82rem;
+  width: 110px;
+  padding: 2px 0;
+}
+.custom-preset-name-input:focus {
+  outline: none;
+  border-bottom-color: var(--chip-color, #a78bfa);
+}
+.custom-preset-confirm {
+  border: none;
+  background: none;
+  color: var(--chip-color, #a78bfa);
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0 4px;
+}
+
 .tick-sound-select {
   align-self: flex-start;
+}
+
+.copy-link-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+}
+.copy-link-btn {
+  padding: 7px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--surface-border);
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  cursor: pointer;
+  transition: border-color var(--dur-base) var(--ease-soft), color var(--dur-base) var(--ease-soft),
+    background var(--dur-base) var(--ease-soft), transform var(--dur-fast) var(--ease-harmonic);
+}
+.copy-link-btn:hover {
+  color: var(--text);
+  transform: translateY(-1px);
+}
+.copy-link-btn:active {
+  transform: translateY(0) scale(0.96);
+}
+.copy-link-fallback {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--surface-border);
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--text-muted);
+  font-size: 0.72rem;
 }
 
 .ear-mode-row {
@@ -614,6 +793,31 @@ select:hover {
   transform: translateY(0) scale(0.96);
 }
 .ear-mode-btn.active {
+  border-color: var(--chip-color, #a78bfa);
+  color: var(--chip-color, #a78bfa);
+  background: color-mix(in srgb, var(--chip-color, #a78bfa) 10%, transparent);
+}
+
+.haptics-toggle {
+  align-self: flex-start;
+  padding: 7px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--surface-border);
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  cursor: pointer;
+  transition: border-color var(--dur-base) var(--ease-soft), color var(--dur-base) var(--ease-soft),
+    background var(--dur-base) var(--ease-soft), transform var(--dur-fast) var(--ease-harmonic);
+}
+.haptics-toggle:hover {
+  color: var(--text);
+  transform: translateY(-1px);
+}
+.haptics-toggle:active {
+  transform: translateY(0) scale(0.96);
+}
+.haptics-toggle.active {
   border-color: var(--chip-color, #a78bfa);
   color: var(--chip-color, #a78bfa);
   background: color-mix(in srgb, var(--chip-color, #a78bfa) 10%, transparent);
@@ -706,9 +910,68 @@ select:hover {
   line-height: 1.6;
   animation: panel-rise var(--dur-base) var(--ease-soft) both;
 }
-.practice-coming-soon {
+
+.session-timer {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 10px;
+}
+.duration-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.duration-chip {
+  min-width: 78px;
+  align-items: center;
+  text-align: center;
+}
+.session-countdown {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 14px;
+  border-radius: 14px;
+  border: 1px solid var(--surface-border);
+  background: rgba(255, 255, 255, 0.02);
+  transition: border-color var(--dur-slow) var(--ease-soft), background var(--dur-slow) var(--ease-soft);
+}
+.session-countdown-time {
+  font-variant-numeric: tabular-nums;
+  font-size: 1.6rem;
+  font-weight: 600;
+  color: var(--text);
+}
+.session-countdown-label {
+  font-size: 0.78rem;
   color: var(--text-faint);
-  font-style: italic;
+}
+.session-countdown-fading {
+  border-color: color-mix(in srgb, var(--band-color, #a78bfa) 45%, var(--surface-border));
+  background: color-mix(in srgb, var(--band-color, #a78bfa) 6%, transparent);
+}
+.session-countdown-ended {
+  border-color: color-mix(in srgb, var(--band-color, #a78bfa) 60%, var(--surface-border));
+  background: color-mix(in srgb, var(--band-color, #a78bfa) 10%, transparent);
+}
+
+/* A single-shot glow bloom when a TIMED session completes naturally —
+   never on a manual Pause/Stop, see sessionPhase in useMetronomeEngine.ts.
+   Deliberately restrained: one soft pulse on the existing --band-glow
+   vocabulary, no particles/confetti. */
+@keyframes session-bloom {
+  0%,
+  100% {
+    filter: drop-shadow(0 0 0 transparent);
+  }
+  30% {
+    filter: drop-shadow(0 0 34px var(--band-glow, rgba(167, 139, 250, 0.8)));
+  }
+}
+.metronome-stage.session-ending .metronome-visual {
+  animation: session-bloom 2.6s var(--ease-soft) 1;
 }
 
 /* ---------- Footer ---------- */
@@ -792,5 +1055,21 @@ select:hover {
   }
   .eye-pupil.tracking {
     transition: none;
+  }
+  /* A plain opacity fade instead of the drop-shadow bloom — no
+     scale/expand, matching the reduced-motion policy everywhere else in
+     this file. */
+  .metronome-stage.session-ending .metronome-visual {
+    animation: session-bloom-fade 2.6s ease-out 1;
+  }
+}
+
+@keyframes session-bloom-fade {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  30% {
+    opacity: 0.7;
   }
 }

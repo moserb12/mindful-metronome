@@ -16,3 +16,11 @@ ReactDOM.createRoot(rootElement).render(
     </ErrorBoundary>
   </React.StrictMode>
 );
+
+// Production only — gated so dev/HMR never fights a cached asset. See
+// public/sw.js for the cache-first-assets/network-first-shell strategy.
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js');
+  });
+}

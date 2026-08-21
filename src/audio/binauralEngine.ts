@@ -256,6 +256,76 @@ export class BinauralEngine {
     this.oscLeft = null;
     this.oscRight = null;
     this.noiseSource = null;
+
+    // Unconditionally re-prime masterGain to the slider's real value.
+    // `masterGain` is created once in the constructor and persists across
+    // stop/start cycles — nothing else ever resets it. Without this, a
+    // session that faded it to ~0 via beginSessionFadeOut() (see below)
+    // would leave the NEXT start() beginning silently, since the ramp
+    // automation from the previous session is still in effect on this
+    // same GainNode.
+    this.masterGain.gain.cancelScheduledValues(this.context.currentTime);
+    this.masterGain.gain.setValueAtTime(this.params.masterVolume, this.context.currentTime);
+  }
+
+  /**
+   * Ramp `masterGain` smoothly to silence over `fadeDurationSec`, starting
+   * from whatever it's currently at. Deliberately does NOT touch
+   * `params.masterVolume` — that's the slider's source of truth, and stays
+   * exactly where the user left it; only the live AudioParam is overridden
+   * temporarily. `stop()` (above) is what re-primes it afterward, so the
+   * next session starts at full volume again rather than picking up from
+   * wherever this ramp left off.
+   */
+  beginSessionFadeOut(fadeDurationSec: number): void {
+    const now = this.context.currentTime;
+    this.masterGain.gain.cancelScheduledValues(now);
+    this.masterGain.gain.setValueAtTime(this.masterGain.gain.value, now);
+    this.masterGain.gain.linearRampToValueAtTime(0.0001, now + fadeDurationSec);
+  }
+
+  /** Cancels any in-flight session fade-out ramp and snaps `masterGain`
+   * back to the slider's real value immediately — used when a NEW session
+   * is armed (a duration is re-picked mid-play) while an OLDER session's
+   * fade-out ramp is still running, so that stale automation can't keep
+   * silently pulling the volume toward zero underneath a session that now
+   * thinks it's freshly 'active'. */
+  cancelSessionFade(): void {
+    const now = this.context.currentTime;
+    this.masterGain.gain.cancelScheduledValues(now);
+    this.masterGain.gain.setValueAtTime(this.params.masterVolume, now);
+  }
+
+  /**
+   * A soft closing tone for a session ending naturally — NOT played on a
+   * manual pause/stop, only when a timed session's own countdown reaches
+   * its fade window. Root/fifth/octave stack derived from the current
+   * carrierHz, so it's always tonally related to whatever's playing,
+   * rather than a fixed jingle. Routed to `analyser` — the SAME point
+   * drone/tick/noise feed into, upstream of `masterGain` — so it rides the
+   * same fade-out ramp instead of sounding after everything else has
+   * already gone quiet. Slow attack + a few seconds of decay, same
+   * per-oscillator envelope style as playTick()'s switch statement below,
+   * just with a much longer tail.
+   */
+  playClosingChime(): void {
+    const now = this.context.currentTime;
+    const root = this.params.carrierHz;
+    const intervals = [1, 1.5, 2]; // root, fifth, octave
+    const chimeGain = this.context.createGain();
+    chimeGain.connect(this.analyser);
+    chimeGain.gain.setValueAtTime(0, now);
+    chimeGain.gain.linearRampToValueAtTime(0.35, now + 0.3);
+    chimeGain.gain.exponentialRampToValueAtTime(0.0001, now + 4);
+
+    intervals.forEach((ratio) => {
+      const osc = this.context.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.value = root * ratio;
+      osc.connect(chimeGain);
+      osc.start(now);
+      osc.stop(now + 4.1);
+    });
   }
 
   /** Smoothly retune the drone to a new carrier/beat pair without a click —

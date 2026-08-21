@@ -1,9 +1,7 @@
-import { useEffect, useRef } from 'react';
-import { BANDS, type BrainwaveBand } from '../../data/bands';
+import { useEffect, useRef, useState } from 'react';
+import { BANDS, MAX_BPM, MIN_BPM, type BrainwaveBand } from '../../data/bands';
 import { computeSwingSegment, type SwingState } from '../../hooks/useMetronomeEngine';
 
-const MIN_BPM = 30;
-const MAX_BPM = 160;
 /** BPM change per pixel dragged — tuned so the full rod's on-screen length
  * covers roughly the full BPM range in one drag. */
 const DRAG_SENSITIVITY = 0.55;
@@ -69,8 +67,15 @@ interface NeuronClusterProps {
 
 /** A handful of small nodes along one side of the pyramid, connected to the
  * eye by thin lines. Re-keyed by `pulseToken` so it remounts (replaying its
- * CSS pulse animation) only when THIS side's tick just sounded. */
+ * CSS pulse animation) only when THIS side's tick just sounded.
+ *
+ * Hovering/tapping a node highlights its own connecting line (a small,
+ * purely decorative flourish — "the instrument notices you're looking at
+ * it") via per-node local state, entirely separate from the pulseToken/
+ * tick-driven pulse above: different elements (the line's opacity/glow,
+ * not the node circle's pulse animation), so the two never fight. */
 function NeuronCluster({ side, color, pulseToken }: NeuronClusterProps) {
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   const base = side === 'left' ? BASE_LEFT : BASE_RIGHT;
   const nodes = [0.28, 0.5, 0.7].map((t) => ({
     x: PIVOT.x + (base.x - PIVOT.x) * t + (side === 'left' ? -18 : 18) * t,
@@ -81,8 +86,26 @@ function NeuronCluster({ side, color, pulseToken }: NeuronClusterProps) {
     <g key={pulseToken} className="neuron-cluster">
       {nodes.map((n, i) => (
         <g key={i}>
-          <line x1={EYE.x} y1={EYE.y} x2={n.x} y2={n.y} stroke={color} strokeWidth={0.6} opacity={0.35} />
-          <circle className="neuron-node" cx={n.x} cy={n.y} r={3.2} fill={color} style={{ animationDelay: `${i * 70}ms` }} />
+          <line
+            x1={EYE.x}
+            y1={EYE.y}
+            x2={n.x}
+            y2={n.y}
+            stroke={color}
+            strokeWidth={0.6}
+            opacity={0.35}
+            className={`neuron-connector ${hoveredIndex === i ? 'neuron-connector-active' : ''}`}
+          />
+          <circle
+            className="neuron-node"
+            cx={n.x}
+            cy={n.y}
+            r={3.2}
+            fill={color}
+            style={{ animationDelay: `${i * 70}ms` }}
+            onPointerEnter={() => setHoveredIndex(i)}
+            onPointerLeave={() => setHoveredIndex((cur) => (cur === i ? null : cur))}
+          />
         </g>
       ))}
     </g>
@@ -189,6 +212,37 @@ export function MetronomeVisual({
   const rafRef = useRef<number | null>(null);
 
   const bandInfo = BANDS[band];
+
+  // Two small, purely decorative one-shot flourishes — tapping the pyramid
+  // outline or the eye's outer ring plays a brief animation via a toggled
+  // CSS class, timed out automatically. Neither touches the rAF loop above
+  // or the pupil-driving effects below: different elements/properties
+  // entirely (the pyramid's own filter, the eye-outer ring's own
+  // transform — never cx/cy, which only the swing/mouse-tracking effects
+  // are allowed to touch), so there's nothing for them to conflict with.
+  const [pyramidPinging, setPyramidPinging] = useState(false);
+  const pyramidPingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [eyeWinking, setEyeWinking] = useState(false);
+  const eyeWinkTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function handlePyramidTap() {
+    if (pyramidPingTimeoutRef.current) clearTimeout(pyramidPingTimeoutRef.current);
+    setPyramidPinging(true);
+    pyramidPingTimeoutRef.current = setTimeout(() => setPyramidPinging(false), 600);
+  }
+
+  function handleEyeTap() {
+    if (eyeWinkTimeoutRef.current) clearTimeout(eyeWinkTimeoutRef.current);
+    setEyeWinking(true);
+    eyeWinkTimeoutRef.current = setTimeout(() => setEyeWinking(false), 250);
+  }
+
+  useEffect(() => {
+    return () => {
+      if (pyramidPingTimeoutRef.current) clearTimeout(pyramidPingTimeoutRef.current);
+      if (eyeWinkTimeoutRef.current) clearTimeout(eyeWinkTimeoutRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     if (!isPlaying) {
@@ -400,7 +454,17 @@ export function MetronomeVisual({
       >
         <path
           d={`M ${PIVOT.x} 48 L ${BASE_RIGHT.x} ${BASE_RIGHT.y} L ${BASE_LEFT.x} ${BASE_LEFT.y} Z`}
-          className="pyramid-outline"
+          className={`pyramid-outline ${pyramidPinging ? 'pyramid-ping' : ''}`}
+          role="button"
+          tabIndex={0}
+          aria-label="Ping the pyramid"
+          onClick={handlePyramidTap}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              handlePyramidTap();
+            }
+          }}
         />
 
         <NeuronCluster side="left" color={bandInfo.color} pulseToken={lastTickSide === 'left' ? `L${tickCount}` : 'L-idle'} />
@@ -415,7 +479,22 @@ export function MetronomeVisual({
         <circle cx={PIVOT.x} cy={PIVOT.y} r={5} className="metronome-pivot-dot" />
 
         <g className="metronome-eye">
-          <circle cx={EYE.x} cy={EYE.y} r={38} className="eye-outer" />
+          <circle
+            cx={EYE.x}
+            cy={EYE.y}
+            r={38}
+            className={`eye-outer ${eyeWinking ? 'eye-wink' : ''}`}
+            role="button"
+            tabIndex={0}
+            aria-label="Wink"
+            onClick={handleEyeTap}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                handleEyeTap();
+              }
+            }}
+          />
           <circle cx={EYE.x} cy={EYE.y} r={22} className="eye-iris" />
           <circle ref={pupilRef} cx={EYE.x} cy={EYE.y} r={9} className="eye-pupil" />
         </g>
