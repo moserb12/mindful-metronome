@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useMetronomeEngine } from './hooks/useMetronomeEngine';
 import { MetronomeVisual } from './components/Metronome/MetronomeVisual';
+import { AcousticVisualizer } from './components/Metronome/AcousticVisualizer';
 import { ControlPanel } from './components/Metronome/ControlPanel';
 import { BANDS } from './data/bands';
 
@@ -39,6 +40,8 @@ export default function App() {
             {engine.isPlaying ? '❚❚ Pause' : '▶ Begin'}
           </button>
         </div>
+
+        <AcousticVisualizer isPlaying={engine.isPlaying} getAnalyser={engine.getAnalyser} bandColor={bandInfo.color} />
 
         <ControlPanel
           carrierHz={engine.carrierHz}

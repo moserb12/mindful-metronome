@@ -3,6 +3,33 @@
 This file is read automatically by Claude Code at the start of every session
 in this repo. Keep it up to date as decisions get made.
 
+## Status update — acoustic interference waveform (oscilloscope/spectrum) panel
+
+Added `src/components/Metronome/AcousticVisualizer.tsx`, a literal
+technical reading of the combined signal (drone + tick + noise, everything
+hitting the output at once), toggleable between a raw oscilloscope line and
+a frequency spectrum bar chart. Adapted from a second Gemini-built
+prototype the builder supplied (`binaural_beats_bpm_lab_v2.html`) —
+specifically called out as the piece she wanted kept: "I really like the
+acoustic interference waveform oscilloscope and spectrum visualizers."
+
+Deliberately kept SEPARATE from the smoothed "chill" waveform ring drawn
+around the eye in `MetronomeVisual` — that ring is ambient decoration built
+into the instrument itself (heavily exponentially-smoothed on purpose, see
+its own comment); this new panel is the opposite on purpose: unsmoothed,
+literal, useful for actually seeing the two carrier tones' interference
+pattern. Both read from the exact same `BinauralEngine.analyser` node —
+no engine changes were needed, just a second consumer of the existing
+analyser.
+
+Rendered as its own card between the transport controls and
+`ControlPanel`, colored by the current band (`bandColor` prop, not a fixed
+palette — same "color follows the band, not the brand" rule as everywhere
+else in this app). Shows "Audio engine inactive" when paused, exactly
+matching the source prototype's nice touch, and only runs its own
+animation-frame loop while playing — same performance discipline as the
+rest of the visual layer.
+
 ## Status update — eye tracking + pendulum-synced drone panning + tick ear modes
 
 A follow-up session, right after the initial build, added three related
