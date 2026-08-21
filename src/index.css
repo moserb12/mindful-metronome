@@ -179,6 +179,28 @@ select {
   fill: rgba(255, 255, 255, 0.35);
 }
 
+.tempo-weight {
+  cursor: grab;
+  touch-action: none;
+}
+.tempo-weight:active {
+  cursor: grabbing;
+}
+.tempo-weight-body {
+  filter: drop-shadow(0 0 6px var(--band-glow, rgba(167, 139, 250, 0.5)));
+  transition: fill 0.6s ease;
+}
+.tempo-weight-notch {
+  stroke: rgba(5, 5, 10, 0.4);
+  stroke-width: 1.5;
+}
+.tempo-weight-hint {
+  text-align: center;
+  margin: 10px 0 0;
+  font-size: 0.76rem;
+  color: var(--text-faint);
+}
+
 .eye-outer {
   fill: rgba(255, 255, 255, 0.03);
   stroke: rgba(255, 255, 255, 0.18);

@@ -3,6 +3,11 @@ import { BeatScheduler } from '../engine/timing';
 import { BinauralEngine, type TickEarMode, type TickSound } from '../audio/binauralEngine';
 import { classifyBeatFrequency, DEFAULT_PRESET, type MetronomePreset } from '../data/bands';
 
+/** How far ahead the audio scheduler keeps its tick queue filled — see the
+ * comment where this is used, in start(). Deliberately much larger than
+ * timing.ts's 0.1s audio-only default. */
+const BACKGROUND_SAFE_LOOKAHEAD_SEC = 3;
+
 // ============================================================================
 // useMetronomeEngine — the React seam between the plain-TS audio/scheduling
 // engines and the visual metronome component.
@@ -171,7 +176,20 @@ export function useMetronomeEngine() {
     // the audio ticks can never disagree about which side is "now".
     swingRef.current = { referenceTimeSec: firstBeatAtSec, referenceSide: 'left', secondsPerBeat: 60 / paramsRef.current.bpm };
 
-    const scheduler = new BeatScheduler(() => engine.context.currentTime, paramsRef.current.bpm, handleBeatScheduled);
+    // A generous lookahead (vs. timing.ts's 0.1s audio-only default) so
+    // playback survives the tab being backgrounded: browsers throttle
+    // setInterval in hidden tabs (commonly clamped to a 1s minimum), and
+    // BeatScheduler only refills its queue when this callback actually
+    // fires. Already-scheduled ticks keep sounding regardless (they're
+    // baked into the audio graph as exact AudioContext times), but the
+    // queue would otherwise run dry within ~100ms of the tab losing focus.
+    // A few seconds of lookahead comfortably outlasts typical throttling.
+    const scheduler = new BeatScheduler(
+      () => engine.context.currentTime,
+      paramsRef.current.bpm,
+      handleBeatScheduled,
+      BACKGROUND_SAFE_LOOKAHEAD_SEC
+    );
     schedulerRef.current = scheduler;
     scheduler.start(firstBeatAtSec);
     setIsPlaying(true);

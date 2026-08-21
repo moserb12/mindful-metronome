@@ -3,6 +3,58 @@
 This file is read automatically by Claude Code at the start of every session
 in this repo. Keep it up to date as decisions get made.
 
+## Status update — tempo weight on the rod + background-tab resilience
+
+Two more from the same conversation as the smoothness/eye-tracking fixes
+above (read that section first — it also covers a re-verification of
+audio-pan-vs-visual agreement done in this same follow-up, using real
+`StereoPannerNode` instrumentation rather than DOM inspection, which came
+back 100% correct on the pushed code; the builder's screenshot showing a
+mismatch most likely reflects a build from before that fix, not a
+still-open bug — check you've pulled latest and restarted your dev server
+if you still see it).
+
+**Tempo weight on the pendulum** (`TempoWeight` in `MetronomeVisual.tsx`):
+the builder's idea — "put the BPM slider on the metronome" — became a
+literal reproduction of how a real mechanical metronome sets tempo: a
+draggable weight that slides along the rod, closer to the pivot for a
+faster tempo (shorter effective pendulum), closer to the tip for slower.
+It's rendered as a child of the arm's own rotating `<g>`, so it swings
+with the pendulum for free — SVG nested transforms compose, no extra
+per-frame code needed. Drag math deliberately ignores the rod's live
+rotation angle and just reads vertical pointer movement (up = faster, down
+= slower) rather than projecting onto the constantly-swinging axis, which
+would fight the animation instead of feeling natural. A small always-
+upright label below the visual (`.tempo-weight-hint`) shows the live BPM
+number, since text rotating with the rod would go illegible at extreme
+angles. The existing BPM slider in `ControlPanel` was kept alongside it —
+both just call the same `setBpm`, so there's no state to keep in sync, and
+the numeric slider is still there for anyone who wants precision over
+theming. Verified via direct `PointerEvent` dispatch (not coordinate-based
+mouse simulation, which kept missing the small ~20×13px target on a second
+consecutive drag in testing — a Playwright quirk, not an app bug): three
+consecutive drags landed at exactly the BPM math predicted.
+
+**Keeps playing when the tab loses focus:** `BeatScheduler`'s lookahead
+for THIS app's audio scheduler was widened from `timing.ts`'s 0.1s
+audio-only default to a new `BACKGROUND_SAFE_LOOKAHEAD_SEC = 3` (see
+`start()` in `useMetronomeEngine.ts`). The risk: BeatScheduler only
+refills its tick queue when its `setInterval` callback fires, and browsers
+throttle `setInterval` in hidden tabs (commonly clamped to a 1s minimum
+per spec). Already-scheduled ticks keep sounding regardless of any JS
+throttling — they're baked into the audio graph as exact `AudioContext`
+times the moment they're scheduled — but with only a 0.1s lookahead the
+queue would run dry within ~100ms of the tab losing focus. 3 seconds of
+lookahead comfortably outlasts typical background throttling. The
+continuous drone was never at risk — its oscillators start once and run
+continuously regardless of any JS timer. One accepted, deliberate
+trade-off: the drone's L/R balance modulation (`updateDroneBalance`,
+driven by the visual's `requestAnimationFrame` loop) pauses while hidden,
+since `requestAnimationFrame` itself doesn't fire in background tabs by
+any browser's design — audio keeps playing, the balance just freezes at
+its last value and resumes smoothly (no drift, since it's recomputed from
+elapsed time) the instant the tab is foregrounded again.
+
 ## Status update — pendulum smoothness + eye-tracking inversion, real bugs fixed
 
 The builder reported the pendulum wasn't swinging smoothly and the eye

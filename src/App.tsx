@@ -30,6 +30,8 @@ export default function App() {
           lastTickSide={engine.lastTickSide}
           tickCount={engine.tickCount}
           onSwingUpdate={engine.updateDroneBalance}
+          bpm={engine.bpm}
+          onSetBpm={engine.setBpm}
         />
 
         <div className="stage-readout">

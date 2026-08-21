@@ -2,6 +2,12 @@ import { useEffect, useRef } from 'react';
 import { BANDS, type BrainwaveBand } from '../../data/bands';
 import { computeSwingSegment, type SwingState } from '../../hooks/useMetronomeEngine';
 
+const MIN_BPM = 30;
+const MAX_BPM = 160;
+/** BPM change per pixel dragged — tuned so the full rod's on-screen length
+ * covers roughly the full BPM range in one drag. */
+const DRAG_SENSITIVITY = 0.55;
+
 // ============================================================================
 // MetronomeVisual — the "quantum metronome": an eye at the center of a
 // pyramid, two neuron clusters (one per hemisphere), and a pendulum arm
@@ -73,6 +79,65 @@ function NeuronCluster({ side, color, pulseToken }: NeuronClusterProps) {
  * the pupil comfortably inside the iris at full deflection. */
 const PUPIL_MAX_OFFSET = 10;
 
+/** Where along the rod the weight can slide, in SVG units from the pivot.
+ * Kept short of the pivot dot and the tip so it never visually collides
+ * with either. */
+const WEIGHT_MIN_OFFSET = 40;
+const WEIGHT_MAX_OFFSET = ARM_LENGTH - 30;
+
+interface TempoWeightProps {
+  bpm: number;
+  onSetBpm: (bpm: number) => void;
+  color: string;
+}
+
+/**
+ * A draggable weight on the pendulum rod, exactly like a real mechanical
+ * metronome: slide it toward the pivot for a faster tempo, toward the tip
+ * for slower — a shorter effective pendulum swings faster. Rendered as a
+ * child of the arm's rotating <g>, so it swings with the pendulum for free
+ * (SVG nested transforms compose) without any extra per-frame code.
+ *
+ * Drag math deliberately ignores the rod's current rotation: it just reads
+ * vertical pointer movement (up = faster, down = slower) rather than
+ * projecting onto the rod's live angle. That's simpler and just as usable
+ * — the rod is swinging while playing, so "grab the exact rotated axis"
+ * would fight the animation instead of feeling natural.
+ */
+function TempoWeight({ bpm, onSetBpm, color }: TempoWeightProps) {
+  const dragState = useRef<{ startClientY: number; startBpm: number } | null>(null);
+
+  const t = (bpm - MIN_BPM) / (MAX_BPM - MIN_BPM);
+  const offset = WEIGHT_MAX_OFFSET - t * (WEIGHT_MAX_OFFSET - WEIGHT_MIN_OFFSET);
+  const weightY = PIVOT.y + offset;
+
+  function handlePointerDown(e: React.PointerEvent) {
+    e.stopPropagation();
+    dragState.current = { startClientY: e.clientY, startBpm: bpm };
+
+    function handleMove(ev: PointerEvent) {
+      if (!dragState.current) return;
+      const deltaY = dragState.current.startClientY - ev.clientY; // up = positive
+      const nextBpm = Math.round(dragState.current.startBpm + deltaY * DRAG_SENSITIVITY);
+      onSetBpm(Math.min(MAX_BPM, Math.max(MIN_BPM, nextBpm)));
+    }
+    function handleUp() {
+      dragState.current = null;
+      window.removeEventListener('pointermove', handleMove);
+      window.removeEventListener('pointerup', handleUp);
+    }
+    window.addEventListener('pointermove', handleMove);
+    window.addEventListener('pointerup', handleUp);
+  }
+
+  return (
+    <g className="tempo-weight" onPointerDown={handlePointerDown} style={{ cursor: 'grab' }}>
+      <rect x={PIVOT.x - 11} y={weightY - 7} width={22} height={14} rx={4} fill={color} className="tempo-weight-body" />
+      <line x1={PIVOT.x - 11} y1={weightY} x2={PIVOT.x + 11} y2={weightY} className="tempo-weight-notch" />
+    </g>
+  );
+}
+
 interface MetronomeVisualProps {
   isPlaying: boolean;
   band: BrainwaveBand;
@@ -85,6 +150,8 @@ interface MetronomeVisualProps {
    * (-1 full left .. 1 full right), so the drone's L/R balance can track
    * it continuously — see BinauralEngine.updateDroneBalance(). */
   onSwingUpdate: (panValue: number) => void;
+  bpm: number;
+  onSetBpm: (bpm: number) => void;
 }
 
 export function MetronomeVisual({
@@ -96,6 +163,8 @@ export function MetronomeVisual({
   lastTickSide,
   tickCount,
   onSwingUpdate,
+  bpm,
+  onSetBpm,
 }: MetronomeVisualProps) {
   const armRef = useRef<SVGGElement | null>(null);
   const pupilRef = useRef<SVGCircleElement | null>(null);
@@ -267,6 +336,7 @@ export function MetronomeVisual({
         <g ref={armRef} className="metronome-arm">
           <line x1={PIVOT.x} y1={PIVOT.y} x2={PIVOT.x} y2={PIVOT.y + ARM_LENGTH} className="metronome-arm-line" />
           <circle cx={PIVOT.x} cy={PIVOT.y + ARM_LENGTH} r={7} className="metronome-arm-tip" />
+          <TempoWeight bpm={bpm} onSetBpm={onSetBpm} color={bandInfo.color} />
         </g>
 
         <circle cx={PIVOT.x} cy={PIVOT.y} r={5} className="metronome-pivot-dot" />
@@ -277,6 +347,7 @@ export function MetronomeVisual({
           <circle ref={pupilRef} cx={EYE.x} cy={EYE.y} r={9} className="eye-pupil" />
         </g>
       </svg>
+      <p className="tempo-weight-hint">Drag the weight — {bpm} BPM</p>
     </div>
   );
 }
