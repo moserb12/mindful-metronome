@@ -1,0 +1,14 @@
+node_modules
+dist
+dist-ssr
+*.local
+.DS_Store
+*.log
+.vscode/*
+!.vscode/extensions.json
+
+# tsc -b build output for the node-context config (vite.config.ts) — the
+# composite project can't disable emit, so these land in the repo root.
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts

@@ -1,0 +1,451 @@
+@import '@fontsource/space-grotesk/400.css';
+@import '@fontsource/space-grotesk/500.css';
+@import '@fontsource/space-grotesk/600.css';
+@import '@fontsource/space-grotesk/700.css';
+
+/* ============================================================================
+   Mindful Metronome — a deliberately different visual system from Brain
+   Bridging Beats: dark, minimalist, "quantum" rather than warm/playful.
+   Near-black ground, soft nebula glows, and color meaning carried entirely
+   by the current brainwave band (--band-color / --band-glow, set inline by
+   the metronome components) rather than a fixed brand palette.
+   ============================================================================ */
+
+:root {
+  --bg-0: #05050a;
+  --bg-1: #0b0b16;
+  --bg-2: #12121f;
+  --surface: rgba(255, 255, 255, 0.04);
+  --surface-border: rgba(255, 255, 255, 0.09);
+  --text: #f1f0f8;
+  --text-muted: #9490ab;
+  --text-faint: #605c78;
+  --radius: 20px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg-0);
+}
+
+body {
+  font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  color: var(--text);
+  background:
+    radial-gradient(60% 50% at 50% 0%, rgba(124, 58, 237, 0.16), transparent 70%),
+    radial-gradient(50% 40% at 85% 15%, rgba(34, 211, 238, 0.08), transparent 70%),
+    radial-gradient(50% 40% at 15% 85%, rgba(244, 114, 182, 0.06), transparent 70%),
+    var(--bg-0);
+  min-height: 100vh;
+}
+
+button {
+  font-family: inherit;
+}
+
+input[type='range'] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 4px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.12);
+  outline: none;
+}
+input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--band-color, #a78bfa);
+  box-shadow: 0 0 10px var(--band-glow, rgba(167, 139, 250, 0.5));
+  cursor: pointer;
+}
+input[type='range']::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border: none;
+  border-radius: 50%;
+  background: var(--band-color, #a78bfa);
+  box-shadow: 0 0 10px var(--band-glow, rgba(167, 139, 250, 0.5));
+  cursor: pointer;
+}
+
+select {
+  background: var(--bg-2);
+  color: var(--text);
+  border: 1px solid var(--surface-border);
+  border-radius: 10px;
+  padding: 6px 10px;
+  font-size: 0.85rem;
+  margin-top: 8px;
+}
+
+/* ---------- App shell ---------- */
+
+.app-shell {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 48px 20px 80px;
+  display: flex;
+  flex-direction: column;
+  gap: 40px;
+}
+
+.hero-header {
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.hero-kicker {
+  font-size: 0.75rem;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.hero-header h1 {
+  font-size: clamp(1.5rem, 4vw, 2.1rem);
+  font-weight: 600;
+  line-height: 1.25;
+  margin: 0;
+  background: linear-gradient(135deg, #f1f0f8, #b9b4d8);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.hero-sub {
+  color: var(--text-muted);
+  font-size: 0.95rem;
+  max-width: 480px;
+  margin: 0 auto;
+}
+
+.metronome-stage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 28px;
+}
+
+/* ---------- Metronome visual ---------- */
+
+.metronome-visual {
+  position: relative;
+  width: min(88vw, 380px);
+  aspect-ratio: 1;
+}
+.metronome-waveform {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.metronome-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.pyramid-outline {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.16);
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+}
+
+.metronome-arm-line {
+  stroke: var(--band-color, #a78bfa);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  filter: drop-shadow(0 0 6px var(--band-glow, rgba(167, 139, 250, 0.5)));
+  transition: stroke 0.6s ease;
+}
+.metronome-arm-tip {
+  fill: var(--band-color, #a78bfa);
+  filter: drop-shadow(0 0 8px var(--band-glow, rgba(167, 139, 250, 0.6)));
+  transition: fill 0.6s ease;
+}
+.metronome-pivot-dot {
+  fill: rgba(255, 255, 255, 0.35);
+}
+
+.eye-outer {
+  fill: rgba(255, 255, 255, 0.03);
+  stroke: rgba(255, 255, 255, 0.18);
+  stroke-width: 1;
+}
+.eye-iris {
+  fill: none;
+  stroke: var(--band-color, #a78bfa);
+  stroke-width: 2;
+  filter: drop-shadow(0 0 10px var(--band-glow, rgba(167, 139, 250, 0.55)));
+  transition: stroke 0.6s ease;
+}
+.eye-pupil {
+  fill: var(--text);
+  opacity: 0.85;
+}
+
+.neuron-node {
+  animation: neuron-pulse-idle 3.4s ease-in-out infinite;
+  transform-origin: center;
+  transform-box: fill-box;
+}
+.neuron-cluster .neuron-node {
+  animation: neuron-pulse-tick 0.55s ease-out;
+}
+@keyframes neuron-pulse-idle {
+  0%,
+  100% {
+    opacity: 0.55;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.9;
+    transform: scale(1.15);
+  }
+}
+@keyframes neuron-pulse-tick {
+  0% {
+    opacity: 1;
+    transform: scale(1.9);
+  }
+  100% {
+    opacity: 0.55;
+    transform: scale(1);
+  }
+}
+
+/* ---------- Readout + transport ---------- */
+
+.stage-readout {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.state-badge {
+  font-size: 0.82rem;
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--badge-color, #a78bfa);
+  color: var(--badge-color, #a78bfa);
+  background: color-mix(in srgb, var(--badge-color, #a78bfa) 12%, transparent);
+}
+.play-toggle {
+  background: var(--text);
+  color: var(--bg-0);
+  border: none;
+  border-radius: 999px;
+  padding: 12px 28px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+.play-toggle:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+.play-toggle:active {
+  transform: translateY(0);
+}
+
+/* ---------- Control panel ---------- */
+
+.control-panel {
+  width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius);
+  padding: 22px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  backdrop-filter: blur(12px);
+}
+.control-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.control-row-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 0.85rem;
+}
+.control-label {
+  font-size: 0.72rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.control-value {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+
+.preset-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.preset-chip {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--surface-border);
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+.preset-chip:hover {
+  border-color: color-mix(in srgb, var(--chip-color) 50%, var(--surface-border));
+  color: var(--text);
+}
+.preset-chip.active {
+  border-color: var(--chip-color);
+  color: var(--chip-color);
+  background: color-mix(in srgb, var(--chip-color) 10%, transparent);
+}
+.preset-chip-range {
+  font-size: 0.65rem;
+  color: var(--text-faint);
+}
+
+.tick-sound-select {
+  align-self: flex-start;
+}
+
+.mixer-row {
+  display: grid;
+  grid-template-columns: 84px 1fr;
+  align-items: center;
+  gap: 12px;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+/* ---------- Practice (secondary) section ---------- */
+
+.practice-section {
+  width: 100%;
+  border-top: 1px solid var(--surface-border);
+  padding-top: 20px;
+}
+.practice-toggle {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  padding: 6px 2px;
+  cursor: pointer;
+}
+.practice-toggle:hover {
+  color: var(--text);
+}
+.practice-toggle-chevron {
+  font-size: 1.2rem;
+  color: var(--text-faint);
+}
+.practice-body {
+  padding: 12px 2px 4px;
+  color: var(--text-muted);
+  font-size: 0.88rem;
+  line-height: 1.6;
+}
+.practice-coming-soon {
+  color: var(--text-faint);
+  font-style: italic;
+}
+
+/* ---------- Footer ---------- */
+
+.app-footer {
+  text-align: center;
+  color: var(--text-faint);
+  font-size: 0.78rem;
+}
+
+/* ---------- Crash recovery (ErrorBoundary) ---------- */
+
+.crash-screen {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.crash-card {
+  background: var(--bg-2);
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius);
+  padding: 32px 36px;
+  max-width: 480px;
+  text-align: center;
+}
+.crash-emoji {
+  font-size: 2rem;
+}
+.crash-reassurance {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+.crash-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 18px 0;
+}
+.btn {
+  border-radius: 999px;
+  padding: 10px 20px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  border: none;
+  cursor: pointer;
+}
+.btn-primary {
+  background: var(--text);
+  color: var(--bg-0);
+}
+.btn-secondary {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+}
+.btn-large {
+  padding: 12px 24px;
+}
+.crash-details {
+  color: var(--text-faint);
+  font-size: 0.78rem;
+  text-align: left;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .neuron-node {
+    animation: none;
+  }
+}
