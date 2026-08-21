@@ -53,9 +53,11 @@ export default function App() {
           beatHz={engine.beatHz}
           bpm={engine.bpm}
           tickSound={engine.tickSound}
+          masterVolume={engine.masterVolume}
           droneVolume={engine.droneVolume}
           tickVolume={engine.tickVolume}
           noiseVolume={engine.noiseVolume}
+          noiseType={engine.noiseType}
           panModulationDepth={engine.panModulationDepth}
           tickEarMode={engine.tickEarMode}
           onSetCarrierHz={engine.setCarrierHz}
@@ -63,6 +65,8 @@ export default function App() {
           onSetBpm={engine.setBpm}
           onSetTickSound={engine.setTickSound}
           onSetVolumes={engine.setVolumes}
+          onSetMasterVolume={engine.setMasterVolume}
+          onSetNoiseType={engine.setNoiseType}
           onSetPanModulationDepth={engine.setPanModulationDepth}
           onSetTickEarMode={engine.setTickEarMode}
           onApplyPreset={engine.applyPreset}

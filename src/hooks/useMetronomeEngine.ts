@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { BeatScheduler } from '../engine/timing';
-import { BinauralEngine, type TickEarMode, type TickSound } from '../audio/binauralEngine';
+import { BinauralEngine, type NoiseType, type TickEarMode, type TickSound } from '../audio/binauralEngine';
 import { classifyBeatFrequency, DEFAULT_PRESET, type MetronomePreset } from '../data/bands';
 
 /** How far ahead the audio scheduler keeps its tick queue filled — see the
@@ -86,9 +86,11 @@ export function useMetronomeEngine() {
   const [beatHz, setBeatHzState] = useState(DEFAULT_PRESET.beatHz);
   const [bpm, setBpmState] = useState(DEFAULT_PRESET.bpm);
   const [tickSound, setTickSoundState] = useState<TickSound>('soft');
+  const [masterVolume, setMasterVolumeState] = useState(0.85);
   const [droneVolume, setDroneVolumeState] = useState(0.55);
   const [tickVolume, setTickVolumeState] = useState(0.7);
   const [noiseVolume, setNoiseVolumeState] = useState(0.08);
+  const [noiseType, setNoiseTypeState] = useState<NoiseType>('pink');
   const [panModulationDepth, setPanModulationDepthState] = useState(0.6); // 80/20 <-> 20/80 at the extremes, by default
   const [tickEarMode, setTickEarModeState] = useState<TickEarMode>('MATCH');
   const [isPlaying, setIsPlaying] = useState(false);
@@ -103,9 +105,11 @@ export function useMetronomeEngine() {
     beatHz,
     bpm,
     tickSound,
+    masterVolume,
     droneVolume,
     tickVolume,
     noiseVolume,
+    noiseType,
     panModulationDepth,
     tickEarMode,
   });
@@ -116,9 +120,11 @@ export function useMetronomeEngine() {
     beatHz,
     bpm,
     tickSound,
+    masterVolume,
     droneVolume,
     tickVolume,
     noiseVolume,
+    noiseType,
     panModulationDepth,
     tickEarMode,
   };
@@ -128,9 +134,11 @@ export function useMetronomeEngine() {
       engineRef.current = new BinauralEngine({
         carrierHz: paramsRef.current.carrierHz,
         beatHz: paramsRef.current.beatHz,
+        masterVolume: paramsRef.current.masterVolume,
         droneVolume: paramsRef.current.droneVolume,
         tickVolume: paramsRef.current.tickVolume,
         noiseVolume: paramsRef.current.noiseVolume,
+        noiseType: paramsRef.current.noiseType,
         tickSound: paramsRef.current.tickSound,
         panModulationDepth: paramsRef.current.panModulationDepth,
         tickEarMode: paramsRef.current.tickEarMode,
@@ -244,6 +252,16 @@ export function useMetronomeEngine() {
     engineRef.current?.setVolumes(merged.droneVolume, merged.tickVolume, merged.noiseVolume);
   }, []);
 
+  const setMasterVolume = useCallback((volume: number) => {
+    setMasterVolumeState(volume);
+    engineRef.current?.setMasterVolume(volume);
+  }, []);
+
+  const setNoiseType = useCallback((type: NoiseType) => {
+    setNoiseTypeState(type);
+    engineRef.current?.setNoiseType(type);
+  }, []);
+
   const setPanModulationDepth = useCallback((depth: number) => {
     setPanModulationDepthState(depth);
     engineRef.current?.setPanModulationDepth(depth);
@@ -283,9 +301,11 @@ export function useMetronomeEngine() {
     beatHz,
     bpm,
     tickSound,
+    masterVolume,
     droneVolume,
     tickVolume,
     noiseVolume,
+    noiseType,
     panModulationDepth,
     tickEarMode,
     isPlaying,
@@ -301,6 +321,8 @@ export function useMetronomeEngine() {
     setBpm,
     setTickSound,
     setVolumes,
+    setMasterVolume,
+    setNoiseType,
     setPanModulationDepth,
     setTickEarMode,
     updateDroneBalance,

@@ -627,6 +627,45 @@ select:hover {
   font-size: 0.82rem;
   color: var(--text-muted);
 }
+.mixer-row-master span {
+  color: var(--text);
+  font-weight: 600;
+}
+.mixer-divider {
+  height: 1px;
+  background: var(--surface-border);
+  margin: 2px 0 4px;
+}
+
+.noise-type-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 2px;
+}
+.noise-type-btn {
+  flex: 1;
+  padding: 7px 8px;
+  border-radius: 10px;
+  border: 1px solid var(--surface-border);
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--text-muted);
+  font-size: 0.76rem;
+  cursor: pointer;
+  transition: border-color var(--dur-base) var(--ease-soft), color var(--dur-base) var(--ease-soft),
+    background var(--dur-base) var(--ease-soft), transform var(--dur-fast) var(--ease-harmonic);
+}
+.noise-type-btn:hover {
+  color: var(--text);
+  transform: translateY(-1px);
+}
+.noise-type-btn:active {
+  transform: translateY(0) scale(0.96);
+}
+.noise-type-btn.active {
+  border-color: var(--chip-color, #a78bfa);
+  color: var(--chip-color, #a78bfa);
+  background: color-mix(in srgb, var(--chip-color, #a78bfa) 10%, transparent);
+}
 
 /* ---------- Practice (secondary) section ---------- */
 

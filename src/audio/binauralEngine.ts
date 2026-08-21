@@ -1,10 +1,10 @@
 // ============================================================================
 // BinauralEngine — the audio heart of Mindful Metronome.
 //
-// Two independent layers, both real Web Audio, both routed through their
-// own GainNode (never one master volume — same principle Brain Bridging
-// Beats uses for its feedback channels: a listener should be able to bring
-// either layer down to zero without touching the other):
+// Three independent layers, each real Web Audio, each routed through its
+// own GainNode (per-channel volume, same principle Brain Bridging Beats
+// uses for its feedback channels: a listener should be able to bring any
+// one layer down to zero without touching the others):
 //
 //   - DRONE: a continuous binaural pair — one sine in each ear, offset by
 //     `beatHz`. The brain never actually receives that difference tone; it's
@@ -20,9 +20,19 @@
 //     (src/engine/timing.ts) at a precise AudioContext time. Which ear (or
 //     both) a tick fires into is controlled by `tickEarMode` — see
 //     resolveTickPan() below.
+//   - NOISE SHIELD: a quiet ambience layer behind both, panned center.
+//     Selectable between pink/white/brown (see NoiseType) — see
+//     buildPinkNoiseBuffer/buildWhiteNoiseBuffer/buildBrownNoiseBuffer for
+//     how each is synthesized, and their scaling constants (chosen by
+//     matching RMS/peak across all three, not eyeballed) for why switching
+//     type mid-session doesn't jump in loudness.
 //
-// A third, quiet PINK NOISE layer is optional texture ("shield") behind
-// both — pure ambience, panned center.
+// All three channel gains feed the shared `analyser` (so the acoustic
+// visualizer always sees the true combined mix), and analyser output then
+// passes through ONE final `masterGain` before the destination — an overall
+// trim on top of the mix, not a substitute for the per-channel gains above.
+// Turning master down still leaves each channel's own balance untouched;
+// turning it back up restores the exact mix that was there before.
 //
 // Nothing in this file assumes React or the DOM beyond the Web Audio API
 // and StereoPannerNode; src/hooks/useMetronomeEngine.ts is the thin React
@@ -30,6 +40,11 @@
 // ============================================================================
 
 export type TickSound = 'soft' | 'wood' | 'kick' | 'hihat';
+
+/** Which noise-shield texture plays behind the drone/tick layers. See
+ * src/data/noiseShields.ts for the user-facing description of each and
+ * which brainwave bands/tempos it pairs well with. */
+export type NoiseType = 'pink' | 'white' | 'brown';
 
 /** How a tick's stereo placement relates to the drone's live L/R balance:
  *   - MATCH: fires in whichever ear the pendulum just arrived at — the ear
@@ -43,9 +58,11 @@ export type TickEarMode = 'MATCH' | 'OPPOSITE' | 'BOTH';
 export interface MetronomeParams {
   carrierHz: number;
   beatHz: number;
+  masterVolume: number; // 0-1, final trim after every channel is mixed together
   droneVolume: number; // 0-1, total combined loudness of both drone channels
   tickVolume: number; // 0-1
   noiseVolume: number; // 0-1
+  noiseType: NoiseType;
   tickSound: TickSound;
   /** 0 = drone always split 50/50 regardless of pendulum position
    * (modulation off). 1 = full swing, 100/0 at one extreme to 0/100 at the
@@ -92,6 +109,41 @@ function buildPinkNoiseBuffer(context: AudioContext, seconds = 2): AudioBuffer {
   return buffer;
 }
 
+/** Generates a buffer of white noise — equal energy at every frequency, the
+ * brightest/most even of the three shields. Scaling constant (0.09) was
+ * chosen by matching RMS against buildPinkNoiseBuffer's output (both land
+ * within ~1% of each other), not eyeballed — so switching shield type
+ * mid-session doesn't jump in perceived loudness. */
+function buildWhiteNoiseBuffer(context: AudioContext, seconds = 2): AudioBuffer {
+  const bufferSize = context.sampleRate * seconds;
+  const buffer = context.createBuffer(1, bufferSize, context.sampleRate);
+  const output = buffer.getChannelData(0);
+  for (let i = 0; i < bufferSize; i++) {
+    output[i] = (Math.random() * 2 - 1) * 0.09;
+  }
+  return buffer;
+}
+
+/** Generates a buffer of brown (Brownian/red) noise via a leaky integrator
+ * over white noise — much steeper low-pass than pink, reads as a deep,
+ * distant rumble. `leak`/`scale` were tuned together (same RMS-matching
+ * process as buildWhiteNoiseBuffer) so this lands at the same loudness as
+ * pink and white despite the very different generation method. */
+function buildBrownNoiseBuffer(context: AudioContext, seconds = 2): AudioBuffer {
+  const bufferSize = context.sampleRate * seconds;
+  const buffer = context.createBuffer(1, bufferSize, context.sampleRate);
+  const output = buffer.getChannelData(0);
+  const leak = 0.02;
+  const scale = 0.9;
+  let lastOut = 0;
+  for (let i = 0; i < bufferSize; i++) {
+    const white = Math.random() * 2 - 1;
+    lastOut = (lastOut + leak * white) / (1 + leak);
+    output[i] = lastOut * scale;
+  }
+  return buffer;
+}
+
 export class BinauralEngine {
   readonly context: AudioContext;
   readonly analyser: AnalyserNode;
@@ -99,7 +151,7 @@ export class BinauralEngine {
   private oscLeft: OscillatorNode | null = null;
   private oscRight: OscillatorNode | null = null;
   private noiseSource: AudioBufferSourceNode | null = null;
-  private readonly pinkNoiseBuffer: AudioBuffer;
+  private readonly noiseBuffers: Record<NoiseType, AudioBuffer>;
 
   /** Per-ear drone gain, so the L/R balance can move independently of the
    * master droneVolume. Their values always sum to droneVolume. */
@@ -107,6 +159,10 @@ export class BinauralEngine {
   private readonly droneGainRight: GainNode;
   private readonly tickGain: GainNode;
   private readonly noiseGain: GainNode;
+  /** Final trim applied AFTER analyser, on top of the already-mixed signal
+   * — see the file-level comment for why this doesn't replace the
+   * per-channel gains above. */
+  private readonly masterGain: GainNode;
 
   private params: MetronomeParams;
   private playing = false;
@@ -123,7 +179,11 @@ export class BinauralEngine {
 
     this.analyser = this.context.createAnalyser();
     this.analyser.fftSize = 2048;
-    this.analyser.connect(this.context.destination);
+
+    this.masterGain = this.context.createGain();
+    this.masterGain.gain.value = clamp01(initialParams.masterVolume);
+    this.analyser.connect(this.masterGain);
+    this.masterGain.connect(this.context.destination);
 
     this.droneGainLeft = this.context.createGain();
     this.droneGainRight = this.context.createGain();
@@ -140,7 +200,11 @@ export class BinauralEngine {
     this.noiseGain.gain.value = initialParams.noiseVolume;
     this.noiseGain.connect(this.analyser);
 
-    this.pinkNoiseBuffer = buildPinkNoiseBuffer(this.context);
+    this.noiseBuffers = {
+      pink: buildPinkNoiseBuffer(this.context),
+      white: buildWhiteNoiseBuffer(this.context),
+      brown: buildBrownNoiseBuffer(this.context),
+    };
   }
 
   get isPlaying(): boolean {
@@ -173,7 +237,7 @@ export class BinauralEngine {
     this.oscRight.start();
 
     this.noiseSource = this.context.createBufferSource();
-    this.noiseSource.buffer = this.pinkNoiseBuffer;
+    this.noiseSource.buffer = this.noiseBuffers[this.params.noiseType];
     this.noiseSource.loop = true;
     this.noiseSource.connect(this.noiseGain);
     this.noiseSource.start();
@@ -212,6 +276,34 @@ export class BinauralEngine {
     this.applyDroneBalance();
     this.tickGain.gain.setTargetAtTime(clamp01(tickVolume), this.context.currentTime, 0.03);
     this.noiseGain.gain.setTargetAtTime(clamp01(noiseVolume), this.context.currentTime, 0.03);
+  }
+
+  /** Final trim on top of the already-mixed signal — turning this down
+   * (even to 0) never touches the individual drone/tick/noise balances, so
+   * bringing it back up restores exactly the mix that was there before. */
+  setMasterVolume(masterVolume: number): void {
+    this.params.masterVolume = clamp01(masterVolume);
+    this.masterGain.gain.setTargetAtTime(this.params.masterVolume, this.context.currentTime, 0.03);
+  }
+
+  /** Swap the noise-shield texture. `AudioBufferSourceNode.buffer` can only
+   * be assigned before `start()` is called — once a source node is
+   * playing, the spec makes further buffer reassignment throw — so a
+   * live swap replaces the node itself rather than mutating the running
+   * one, carrying over the same `noiseGain` routing (and therefore the
+   * same volume/mute state) without any click, since both types were
+   * loudness-matched at generation time. */
+  setNoiseType(noiseType: NoiseType): void {
+    this.params.noiseType = noiseType;
+    if (this.playing && this.noiseSource) {
+      this.noiseSource.stop();
+      const next = this.context.createBufferSource();
+      next.buffer = this.noiseBuffers[noiseType];
+      next.loop = true;
+      next.connect(this.noiseGain);
+      next.start();
+      this.noiseSource = next;
+    }
   }
 
   setTickSound(tickSound: TickSound): void {

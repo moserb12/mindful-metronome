@@ -1,14 +1,17 @@
 import { BANDS, PRESETS, classifyBeatFrequency, type MetronomePreset } from '../../data/bands';
-import type { TickEarMode, TickSound } from '../../audio/binauralEngine';
+import { NOISE_SHIELDS, NOISE_SHIELD_ORDER } from '../../data/noiseShields';
+import type { NoiseType, TickEarMode, TickSound } from '../../audio/binauralEngine';
 
 interface ControlPanelProps {
   carrierHz: number;
   beatHz: number;
   bpm: number;
   tickSound: TickSound;
+  masterVolume: number;
   droneVolume: number;
   tickVolume: number;
   noiseVolume: number;
+  noiseType: NoiseType;
   panModulationDepth: number;
   tickEarMode: TickEarMode;
   onSetCarrierHz: (hz: number) => void;
@@ -16,6 +19,8 @@ interface ControlPanelProps {
   onSetBpm: (bpm: number) => void;
   onSetTickSound: (sound: TickSound) => void;
   onSetVolumes: (next: { droneVolume?: number; tickVolume?: number; noiseVolume?: number }) => void;
+  onSetMasterVolume: (volume: number) => void;
+  onSetNoiseType: (type: NoiseType) => void;
   onSetPanModulationDepth: (depth: number) => void;
   onSetTickEarMode: (mode: TickEarMode) => void;
   onApplyPreset: (preset: MetronomePreset) => void;
@@ -47,9 +52,11 @@ export function ControlPanel({
   beatHz,
   bpm,
   tickSound,
+  masterVolume,
   droneVolume,
   tickVolume,
   noiseVolume,
+  noiseType,
   panModulationDepth,
   tickEarMode,
   onSetCarrierHz,
@@ -57,11 +64,14 @@ export function ControlPanel({
   onSetBpm,
   onSetTickSound,
   onSetVolumes,
+  onSetMasterVolume,
+  onSetNoiseType,
   onSetPanModulationDepth,
   onSetTickEarMode,
   onApplyPreset,
 }: ControlPanelProps) {
   const band = classifyBeatFrequency(beatHz);
+  const activeShield = NOISE_SHIELDS[noiseType];
 
   return (
     <div className="control-panel">
@@ -132,7 +142,19 @@ export function ControlPanel({
       </div>
 
       <div className="control-group">
-        <span className="control-label">Mix</span>
+        <span className="control-label">Volume Mixer</span>
+        <label className="mixer-row mixer-row-master">
+          <span>Master</span>
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.01}
+            value={masterVolume}
+            onChange={(e) => onSetMasterVolume(Number(e.target.value))}
+          />
+        </label>
+        <div className="mixer-divider" />
         <label className="mixer-row">
           <span>Drone</span>
           <input
@@ -166,6 +188,22 @@ export function ControlPanel({
             onChange={(e) => onSetVolumes({ noiseVolume: Number(e.target.value) })}
           />
         </label>
+        <div className="noise-type-row" style={{ '--chip-color': BANDS[band].color } as React.CSSProperties}>
+          {NOISE_SHIELD_ORDER.map((type) => (
+            <button
+              key={type}
+              type="button"
+              className={`noise-type-btn ${noiseType === type ? 'active' : ''}`}
+              onClick={() => onSetNoiseType(type)}
+            >
+              {NOISE_SHIELDS[type].label}
+            </button>
+          ))}
+        </div>
+        <p className="control-hint">
+          {activeShield.description} Pairs well with{' '}
+          {activeShield.pairsWithBands.map((b) => BANDS[b].label).join(' & ')} tones, {activeShield.tempoHint}.
+        </p>
       </div>
 
       <div className="control-group">

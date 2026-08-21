@@ -3,6 +3,40 @@
 This file is read automatically by Claude Code at the start of every session
 in this repo. Keep it up to date as decisions get made.
 
+## Status update — master volume + selectable noise shields (pink/white/brown)
+
+Two additions to the mixer, both in `ControlPanel.tsx` / `binauralEngine.ts`:
+
+- **Master volume.** A single `masterGain` GainNode sits AFTER `analyser`
+  and before `context.destination` — downstream of every existing
+  per-channel gain (drone/tick/noise), not a replacement for them. Turning
+  master down (even to 0) never touches the drone/tick/noise balance
+  underneath; turning it back up restores exactly the mix that was there.
+  The "Mix" control group was renamed **"Volume Mixer"** and now leads with
+  a bold Master row above a divider, then the three existing channel rows.
+- **Selectable noise-shield type — pink, white, or brown**
+  (`NoiseType` in `binauralEngine.ts`). Previously only pink noise existed.
+  `buildWhiteNoiseBuffer`/`buildBrownNoiseBuffer` were added alongside the
+  existing pink generator, and their scaling constants were NOT eyeballed —
+  each was tuned by comparing RMS/peak against pink's actual output (a
+  quick Node script replicating the exact same math, no browser needed)
+  until all three landed within ~1% of each other. This matters because
+  otherwise switching shield type mid-session would jump in perceived
+  loudness independent of the volume slider, which would read as a bug.
+  `AudioBufferSourceNode.buffer` can only be assigned before `start()` —
+  the spec throws if you reassign it on an already-started node — so
+  `setNoiseType()` swaps the whole node (stop old, create+start new with
+  the new buffer, same `noiseGain` routing) rather than mutating one in
+  place, same pattern as a tick's one-shot oscillator.
+  `src/data/noiseShields.ts` holds the user-facing side: a short
+  description of each texture plus which brainwave bands and tempo range
+  it pairs well with, shown as a chip row + dynamic caption underneath the
+  Noise shield volume slider. The pairing logic is deliberately consistent
+  with the noise itself: brighter/higher-energy shields (white) suit the
+  more alert bands and brisker tempos (Beta/Gamma, 84-160 BPM); deeper/
+  bassier shields (brown) suit the slower, more restful ones (Delta/Theta,
+  30-56 BPM); pink sits in the middle and stays the default.
+
 ## Status update — the REAL eye/arm inversion bug (corrects the section below)
 
 The builder reported, after the CSS→native-SVG-attribute fix documented
