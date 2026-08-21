@@ -8,26 +8,72 @@ import { classifyBeatFrequency, DEFAULT_PRESET, type MetronomePreset } from '../
 // engines and the visual metronome component.
 //
 // Two very different update rates live side by side on purpose:
-//   - `swingRef` is a plain ref, written every time a beat is SCHEDULED
-//     (roughly every quarter second at most, well before it sounds). The
-//     visual component reads it inside its own requestAnimationFrame loop
-//     to compute a smooth 60fps swing angle. Driving that through React
-//     state would mean a re-render on every animation frame — exactly the
-//     kind of thing that makes an app unusable on an older tablet, which
-//     matters here since this needs to run on "as many platforms as
-//     possible" just like Brain Bridging Beats did.
+//   - `swingRef` is a plain ref carrying a SINGLE fixed reference point
+//     (one beat's time + side + the tempo in effect from it) rather than
+//     an explicit from/to pair. The visual computes which segment "now"
+//     falls into, and how far through it, by pure elapsed-time arithmetic
+//     every animation frame — see computeSwingSegment() in
+//     MetronomeVisual.tsx. This is a deliberate redesign: an earlier
+//     version re-pointed swingRef's from/to boundaries every time a beat
+//     was SCHEDULED (via BeatScheduler's lookahead callback, which fires
+//     only ~100ms before a beat sounds). That sounds like plenty of lead
+//     time but isn't: a swing segment actually STARTS a full beat
+//     interval earlier, at the PREVIOUS beat's arrival, so the arm sat
+//     frozen at each extreme for most of the beat and then had to jump to
+//     ~90% through its eased curve the instant the next segment arrived —
+//     a visible freeze-then-snap instead of a smooth swing. Deriving the
+//     segment from elapsed time relative to a fixed reference removes the
+//     dependency on scheduler notification timing entirely.
 //   - `lastTickSide`/`tickCount` ARE React state, but only flip once per
 //     beat, and only at the moment the tick actually SOUNDS (delayed via
 //     setTimeout from the scheduling callback, which fires ~100ms ahead) —
 //     that's cheap, and it's what the wiggle animation and any other
-//     discrete per-tick UI keys off.
+//     discrete per-tick UI keys off. This part is unaffected by the redesign
+//     above — audio ticks still come from BeatScheduler as before.
 // ============================================================================
 
 export interface SwingState {
+  /** AudioContext time some beat with `referenceSide` sounded (or, for the
+   * very first reference right after start(), WILL sound). */
+  referenceTimeSec: number;
+  referenceSide: 'left' | 'right';
+  /** Tempo in effect from this reference point forward. Kept alongside the
+   * reference (rather than read live from React state) so a mid-play BPM
+   * change can never retroactively distort segments computed before it. */
+  secondsPerBeat: number;
+}
+
+export interface SwingSegment {
   fromSide: 'left' | 'right';
   fromTimeSec: number;
   toSide: 'left' | 'right';
   toTimeSec: number;
+}
+
+function oppositeSide(side: 'left' | 'right'): 'left' | 'right' {
+  return side === 'left' ? 'right' : 'left';
+}
+
+/**
+ * Pure function: given the fixed reference point and the current time,
+ * compute which swing segment "now" falls into and its exact boundaries.
+ * Called every animation frame by the visual (see MetronomeVisual.tsx) —
+ * this is what makes the swing smooth: no waiting on a scheduler callback,
+ * just elapsed-time arithmetic against one fixed anchor. Also used once by
+ * setBpm() below to find a continuity point when the tempo changes
+ * mid-play.
+ */
+export function computeSwingSegment(nowSec: number, ref: SwingState): SwingSegment {
+  const { referenceTimeSec, referenceSide, secondsPerBeat } = ref;
+  const segmentIndex = Math.floor((nowSec - referenceTimeSec) / secondsPerBeat);
+  const segmentEndSec = referenceTimeSec + (segmentIndex + 1) * secondsPerBeat;
+  const segmentStartSec = segmentEndSec - secondsPerBeat;
+  // JS's `%` keeps the sign of the dividend, so normalize before checking
+  // parity — segmentIndex can legitimately be negative (now before the
+  // reference point, e.g. during the lead-in).
+  const isOddSegment = ((segmentIndex % 2) + 2) % 2 === 1;
+  const toSide = isOddSegment ? referenceSide : oppositeSide(referenceSide);
+  return { fromSide: oppositeSide(toSide), fromTimeSec: segmentStartSec, toSide, toTimeSec: segmentEndSec };
 }
 
 export function useMetronomeEngine() {
@@ -92,15 +138,6 @@ export function useMetronomeEngine() {
     const engine = engineRef.current;
     if (!engine) return;
     const side: 'left' | 'right' = beat.beatIndex % 2 === 0 ? 'left' : 'right';
-    const secondsPerBeat = 60 / paramsRef.current.bpm;
-
-    const prev = swingRef.current;
-    swingRef.current = {
-      fromSide: prev ? prev.toSide : side === 'left' ? 'right' : 'left',
-      fromTimeSec: prev ? prev.toTimeSec : beat.timeSec - secondsPerBeat,
-      toSide: side,
-      toTimeSec: beat.timeSec,
-    };
 
     engine.playTick(side, beat.timeSec);
 
@@ -127,11 +164,16 @@ export function useMetronomeEngine() {
     const engine = ensureEngine();
     if (engine.context.state === 'suspended') void engine.context.resume();
     engine.start();
-    swingRef.current = null;
+
+    const firstBeatAtSec = engine.context.currentTime + 0.15;
+    // beatIndex 0 is always 'left' (see handleBeatScheduled) — anchor the
+    // visual's reference point to that same first beat so the swing and
+    // the audio ticks can never disagree about which side is "now".
+    swingRef.current = { referenceTimeSec: firstBeatAtSec, referenceSide: 'left', secondsPerBeat: 60 / paramsRef.current.bpm };
 
     const scheduler = new BeatScheduler(() => engine.context.currentTime, paramsRef.current.bpm, handleBeatScheduled);
     schedulerRef.current = scheduler;
-    scheduler.start(engine.context.currentTime + 0.15);
+    scheduler.start(firstBeatAtSec);
     setIsPlaying(true);
   }, [handleBeatScheduled]);
 
@@ -153,6 +195,18 @@ export function useMetronomeEngine() {
   const setBpm = useCallback((next: number) => {
     setBpmState(next);
     schedulerRef.current?.setBpm(next);
+
+    // Re-anchor the visual's reference point at the moment the tempo
+    // changes, so segments computed before this instant are never
+    // retroactively stretched/compressed by the new secondsPerBeat. Picks
+    // up mid-swing exactly where the arm currently is (whichever side it
+    // was already heading toward), just continuing at the new pace.
+    const engine = engineRef.current;
+    if (engine && swingRef.current) {
+      const now = engine.context.currentTime;
+      const segment = computeSwingSegment(now, swingRef.current);
+      swingRef.current = { referenceTimeSec: segment.toTimeSec, referenceSide: segment.toSide, secondsPerBeat: 60 / next };
+    }
   }, []);
 
   const setTickSound = useCallback((sound: TickSound) => {

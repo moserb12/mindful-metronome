@@ -3,6 +3,62 @@
 This file is read automatically by Claude Code at the start of every session
 in this repo. Keep it up to date as decisions get made.
 
+## Status update — pendulum smoothness + eye-tracking inversion, real bugs fixed
+
+The builder reported the pendulum wasn't swinging smoothly and the eye
+tracking looked inverted. Both were real, and both are fixed — this is not
+a cosmetic tweak, it's a correction to a genuine design flaw in the first
+version.
+
+**Smoothness — root cause, confirmed by direct measurement (Playwright
+sampling the live DOM every ~40-50ms):** the swing's from/to boundaries
+used to get re-pointed only when `BeatScheduler` SCHEDULED a beat, which
+fires just ~100ms before that beat sounds. But a swing segment actually
+STARTS a full beat interval earlier, at the PREVIOUS beat's arrival — so
+the arm sat completely frozen at each extreme for most of a beat (up to
+~800ms at 64 BPM), then had to render already ~90% through its eased curve
+the instant the next segment showed up. Measured: max frame-to-frame angle
+delta was 61.7°, i.e. a visible snap, not a swing.
+
+**Fix:** `SwingState` (`useMetronomeEngine.ts`) no longer stores explicit
+from/to boundaries at all. It stores ONE fixed reference point — a beat's
+time + side + the tempo in effect from it — and a new pure function,
+`computeSwingSegment(nowSec, ref)`, derives which segment "now" falls into
+and how far through it by elapsed-time arithmetic, called fresh every
+animation frame. This has zero dependency on scheduler notification
+timing. `setBpm()` re-anchors the reference at the moment of a mid-play
+tempo change (continuing from wherever the arm currently is, at the new
+pace) so a live BPM drag can't retroactively distort segments computed
+before it. `computeSwingSegment` is pure and unit-tested directly
+(`useMetronomeEngine.test.ts`) — no scheduler, no timers, no DOM. Measured
+after the fix: max frame-to-frame delta ~5.4°, smooth.
+
+**Eye inversion — root cause:** both the arm's rotation and the pupil's
+offset were driven through CSS (`style.transform`), and CSS
+`transform`/`transform-origin`/`transform-box` on SVG elements is a
+genuinely inconsistent corner of the platform across browsers (units,
+default transform-box, and compositing all vary). Fixed by switching both
+to NATIVE SVG attributes instead — `element.setAttribute('transform',
+'rotate(deg, cx, cy)')` for the arm, and setting the pupil's `cx`/`cy`
+attributes directly rather than a CSS `translate()`. Both have been
+unambiguous, plain-SVG-user-unit operations since SVG 1.1, so there's
+nothing left for a browser to interpret differently. Verified: pupil
+offset direction now agrees with the arm's swing direction on 100% of
+sampled frames (was previously unverified/assumed correct from a single
+screenshot, which is exactly how this kind of bug slips through — always
+sample many frames programmatically, not one screenshot, when verifying
+anything animated).
+
+Also fielded, same conversation: "is there bloat from splitting off Brain
+Bridging Beats, should we start over?" — checked directly: 1,642 lines
+across the whole `src/` tree, 3 runtime dependencies (react, react-dom, one
+font package), 53KB gzipped JS. Confirmed nothing beyond `timing.ts` and
+`ErrorBoundary.tsx` was ever ported from Brain Bridging Beats (see the
+Origin story section below) — no curriculum, no storage, no input
+adapters, no leftover component tree. There is no bloat to clean up by
+starting over; a rewrite would only re-derive the same ~150 lines of
+scheduling math and lose the tests already covering it.
+
 ## Status update — acoustic interference waveform (oscilloscope/spectrum) panel
 
 Added `src/components/Metronome/AcousticVisualizer.tsx`, a literal

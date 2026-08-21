@@ -194,8 +194,6 @@ select {
 .eye-pupil {
   fill: var(--text);
   opacity: 0.85;
-  transform-box: fill-box;
-  transform-origin: center;
 }
 
 .neuron-node {

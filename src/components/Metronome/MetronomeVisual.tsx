@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { BANDS, type BrainwaveBand } from '../../data/bands';
-import type { SwingState } from '../../hooks/useMetronomeEngine';
+import { computeSwingSegment, type SwingState } from '../../hooks/useMetronomeEngine';
 
 // ============================================================================
 // MetronomeVisual — the "quantum metronome": an eye at the center of a
@@ -109,8 +109,11 @@ export function MetronomeVisual({
     if (!isPlaying) {
       // Resting pose: arm hangs straight down, eye looks front, no
       // animation loop running.
-      if (armRef.current) armRef.current.style.transform = `rotate(0deg)`;
-      if (pupilRef.current) pupilRef.current.style.transform = 'translate(0px, 0px)';
+      if (armRef.current) armRef.current.setAttribute('transform', `rotate(0 ${PIVOT.x} ${PIVOT.y})`);
+      if (pupilRef.current) {
+        pupilRef.current.setAttribute('cx', String(EYE.x));
+        pupilRef.current.setAttribute('cy', String(EYE.y));
+      }
       onSwingUpdate(0);
       return;
     }
@@ -124,34 +127,55 @@ export function MetronomeVisual({
       let wiggle = 0;
       let panValue = 0;
       if (swing) {
-        const span = swing.toTimeSec - swing.fromTimeSec;
-        const t = span > 0 ? Math.min(1, Math.max(0, (now - swing.fromTimeSec) / span)) : 1;
+        // computeSwingSegment derives which segment "now" falls into (and
+        // how far through it) by pure elapsed-time arithmetic against a
+        // fixed reference point — see the long comment on SwingState in
+        // useMetronomeEngine.ts for why this replaced an earlier version
+        // that re-pointed from/to boundaries only when a beat was
+        // SCHEDULED. That approach left the arm frozen at each extreme for
+        // most of a beat, then jumping to ~90% through its eased curve the
+        // instant the next segment arrived — a visible freeze-then-snap
+        // instead of a smooth swing.
+        const segment = computeSwingSegment(now, swing);
+        const span = segment.toTimeSec - segment.fromTimeSec;
+        const t = span > 0 ? Math.min(1, Math.max(0, (now - segment.fromTimeSec) / span)) : 1;
         const eased = easeInOutSine(t);
-        const fromDeg = swing.fromSide === 'left' ? LEFT_ANGLE : RIGHT_ANGLE;
-        const toDeg = swing.toSide === 'left' ? LEFT_ANGLE : RIGHT_ANGLE;
+        const fromDeg = segment.fromSide === 'left' ? LEFT_ANGLE : RIGHT_ANGLE;
+        const toDeg = segment.toSide === 'left' ? LEFT_ANGLE : RIGHT_ANGLE;
         angle = fromDeg + (toDeg - fromDeg) * eased;
 
-        const fromPan = swing.fromSide === 'left' ? -1 : 1;
-        const toPan = swing.toSide === 'left' ? -1 : 1;
+        const fromPan = segment.fromSide === 'left' ? -1 : 1;
+        const toPan = segment.toSide === 'left' ? -1 : 1;
         panValue = fromPan + (toPan - fromPan) * eased;
 
         // A short, decaying vibration layered on top the instant the tip
         // arrives at a side (when the tick actually sounds) — the
         // "wiggle" the tone triggers, distinct from the smooth swing.
-        const sinceArrival = now - swing.toTimeSec;
+        const sinceArrival = now - segment.toTimeSec;
         if (sinceArrival >= 0 && sinceArrival < 0.35) {
           wiggle = Math.exp(-sinceArrival * 14) * Math.sin(sinceArrival * 60) * 4;
         }
       }
 
-      if (arm) arm.style.transform = `rotate(${angle + wiggle}deg)`;
+      // Native SVG `transform` attribute, not a CSS transform — CSS
+      // transform/transform-origin on SVG elements is an inconsistently
+      // implemented corner of the platform across browsers (units, default
+      // transform-box, and compositing behavior all vary). The SVG
+      // attribute form (`rotate(deg, cx, cy)`) has been unambiguous since
+      // SVG 1.1: it always operates in the element's own user-unit
+      // coordinate system, so there's nothing left to disagree about.
+      const totalAngle = angle + wiggle;
+      if (arm) arm.setAttribute('transform', `rotate(${totalAngle} ${PIVOT.x} ${PIVOT.y})`);
       onSwingUpdate(panValue);
 
       // The eye watches the pendulum: look toward wherever the tip
       // currently is, using the SAME angle (including the wiggle) that
-      // just moved the arm, so the eye reacts to the tick too.
+      // just moved the arm, so the eye reacts to the tick too. Setting
+      // cx/cy directly (rather than a CSS translate) sidesteps the same
+      // transform-box ambiguity noted above — cx/cy are always plain SVG
+      // user units, so this can never come out mirrored or scaled wrong.
       if (pupilRef.current) {
-        const angleRad = ((angle + wiggle) * Math.PI) / 180;
+        const angleRad = (totalAngle * Math.PI) / 180;
         const tipX = PIVOT.x + ARM_LENGTH * Math.sin(angleRad);
         const tipY = PIVOT.y + ARM_LENGTH * Math.cos(angleRad);
         const dx = tipX - EYE.x;
@@ -159,7 +183,8 @@ export function MetronomeVisual({
         const dist = Math.hypot(dx, dy) || 1;
         const offsetX = (dx / dist) * PUPIL_MAX_OFFSET;
         const offsetY = (dy / dist) * PUPIL_MAX_OFFSET;
-        pupilRef.current.style.transform = `translate(${offsetX}px, ${offsetY}px)`;
+        pupilRef.current.setAttribute('cx', String(EYE.x + offsetX));
+        pupilRef.current.setAttribute('cy', String(EYE.y + offsetY));
       }
 
       drawWaveform();
@@ -239,7 +264,7 @@ export function MetronomeVisual({
         <NeuronCluster side="left" color={bandInfo.color} pulseToken={lastTickSide === 'left' ? `L${tickCount}` : 'L-idle'} />
         <NeuronCluster side="right" color={bandInfo.color} pulseToken={lastTickSide === 'right' ? `R${tickCount}` : 'R-idle'} />
 
-        <g ref={armRef} className="metronome-arm" style={{ transformOrigin: `${PIVOT.x}px ${PIVOT.y}px` }}>
+        <g ref={armRef} className="metronome-arm">
           <line x1={PIVOT.x} y1={PIVOT.y} x2={PIVOT.x} y2={PIVOT.y + ARM_LENGTH} className="metronome-arm-line" />
           <circle cx={PIVOT.x} cy={PIVOT.y + ARM_LENGTH} r={7} className="metronome-arm-tip" />
         </g>
