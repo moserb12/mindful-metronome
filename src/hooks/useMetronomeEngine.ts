@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { BeatScheduler } from '../engine/timing';
-import { BinauralEngine, type TickSound } from '../audio/binauralEngine';
+import { BinauralEngine, type TickEarMode, type TickSound } from '../audio/binauralEngine';
 import { classifyBeatFrequency, DEFAULT_PRESET, type MetronomePreset } from '../data/bands';
 
 // ============================================================================
@@ -38,6 +38,8 @@ export function useMetronomeEngine() {
   const [droneVolume, setDroneVolumeState] = useState(0.55);
   const [tickVolume, setTickVolumeState] = useState(0.7);
   const [noiseVolume, setNoiseVolumeState] = useState(0.08);
+  const [panModulationDepth, setPanModulationDepthState] = useState(0.6); // 80/20 <-> 20/80 at the extremes, by default
+  const [tickEarMode, setTickEarModeState] = useState<TickEarMode>('MATCH');
   const [isPlaying, setIsPlaying] = useState(false);
   const [lastTickSide, setLastTickSide] = useState<'left' | 'right' | null>(null);
   const [tickCount, setTickCount] = useState(0);
@@ -45,10 +47,30 @@ export function useMetronomeEngine() {
   const engineRef = useRef<BinauralEngine | null>(null);
   const schedulerRef = useRef<BeatScheduler | null>(null);
   const swingRef = useRef<SwingState | null>(null);
-  const paramsRef = useRef({ carrierHz, beatHz, bpm, tickSound, droneVolume, tickVolume, noiseVolume });
+  const paramsRef = useRef({
+    carrierHz,
+    beatHz,
+    bpm,
+    tickSound,
+    droneVolume,
+    tickVolume,
+    noiseVolume,
+    panModulationDepth,
+    tickEarMode,
+  });
   const wiggleTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  paramsRef.current = { carrierHz, beatHz, bpm, tickSound, droneVolume, tickVolume, noiseVolume };
+  paramsRef.current = {
+    carrierHz,
+    beatHz,
+    bpm,
+    tickSound,
+    droneVolume,
+    tickVolume,
+    noiseVolume,
+    panModulationDepth,
+    tickEarMode,
+  };
 
   function ensureEngine(): BinauralEngine {
     if (!engineRef.current) {
@@ -59,6 +81,8 @@ export function useMetronomeEngine() {
         tickVolume: paramsRef.current.tickVolume,
         noiseVolume: paramsRef.current.noiseVolume,
         tickSound: paramsRef.current.tickSound,
+        panModulationDepth: paramsRef.current.panModulationDepth,
+        tickEarMode: paramsRef.current.tickEarMode,
       });
     }
     return engineRef.current;
@@ -148,6 +172,23 @@ export function useMetronomeEngine() {
     engineRef.current?.setVolumes(merged.droneVolume, merged.tickVolume, merged.noiseVolume);
   }, []);
 
+  const setPanModulationDepth = useCallback((depth: number) => {
+    setPanModulationDepthState(depth);
+    engineRef.current?.setPanModulationDepth(depth);
+  }, []);
+
+  const setTickEarMode = useCallback((mode: TickEarMode) => {
+    setTickEarModeState(mode);
+    engineRef.current?.setTickEarMode(mode);
+  }, []);
+
+  /** Called every animation frame by the visual, using the exact swing
+   * position that also drives the arm's rotation — see the long comment at
+   * the top of this file for why this bypasses React state entirely. */
+  const updateDroneBalance = useCallback((panValue: number) => {
+    engineRef.current?.updateDroneBalance(panValue);
+  }, []);
+
   const applyPreset = useCallback(
     (preset: MetronomePreset) => {
       setCarrierHz(preset.carrierHz);
@@ -173,6 +214,8 @@ export function useMetronomeEngine() {
     droneVolume,
     tickVolume,
     noiseVolume,
+    panModulationDepth,
+    tickEarMode,
     isPlaying,
     band: classifyBeatFrequency(beatHz),
     lastTickSide,
@@ -186,6 +229,9 @@ export function useMetronomeEngine() {
     setBpm,
     setTickSound,
     setVolumes,
+    setPanModulationDepth,
+    setTickEarMode,
+    updateDroneBalance,
     applyPreset,
   };
 }

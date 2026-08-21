@@ -68,6 +68,11 @@ function NeuronCluster({ side, color, pulseToken }: NeuronClusterProps) {
   );
 }
 
+/** How far the pupil can drift from the iris's center while tracking the
+ * pendulum, in SVG units. Iris radius is 22, pupil radius 9 — this keeps
+ * the pupil comfortably inside the iris at full deflection. */
+const PUPIL_MAX_OFFSET = 10;
+
 interface MetronomeVisualProps {
   isPlaying: boolean;
   band: BrainwaveBand;
@@ -76,6 +81,10 @@ interface MetronomeVisualProps {
   getAnalyser: () => AnalyserNode | null;
   lastTickSide: 'left' | 'right' | null;
   tickCount: number;
+  /** Called every animation frame with the pendulum's current position
+   * (-1 full left .. 1 full right), so the drone's L/R balance can track
+   * it continuously — see BinauralEngine.updateDroneBalance(). */
+  onSwingUpdate: (panValue: number) => void;
 }
 
 export function MetronomeVisual({
@@ -86,8 +95,10 @@ export function MetronomeVisual({
   getAnalyser,
   lastTickSide,
   tickCount,
+  onSwingUpdate,
 }: MetronomeVisualProps) {
   const armRef = useRef<SVGGElement | null>(null);
+  const pupilRef = useRef<SVGCircleElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const smoothedRef = useRef<number[] | null>(null);
   const rafRef = useRef<number | null>(null);
@@ -96,8 +107,11 @@ export function MetronomeVisual({
 
   useEffect(() => {
     if (!isPlaying) {
-      // Resting pose: arm hangs straight down, no animation loop running.
+      // Resting pose: arm hangs straight down, eye looks front, no
+      // animation loop running.
       if (armRef.current) armRef.current.style.transform = `rotate(0deg)`;
+      if (pupilRef.current) pupilRef.current.style.transform = 'translate(0px, 0px)';
+      onSwingUpdate(0);
       return;
     }
 
@@ -106,26 +120,46 @@ export function MetronomeVisual({
       const swing = swingRef.current;
       const now = getAudioTimeSec();
 
-      if (arm) {
-        let angle = 0;
-        let wiggle = 0;
-        if (swing) {
-          const span = swing.toTimeSec - swing.fromTimeSec;
-          const t = span > 0 ? Math.min(1, Math.max(0, (now - swing.fromTimeSec) / span)) : 1;
-          const eased = easeInOutSine(t);
-          const fromDeg = swing.fromSide === 'left' ? LEFT_ANGLE : RIGHT_ANGLE;
-          const toDeg = swing.toSide === 'left' ? LEFT_ANGLE : RIGHT_ANGLE;
-          angle = fromDeg + (toDeg - fromDeg) * eased;
+      let angle = 0;
+      let wiggle = 0;
+      let panValue = 0;
+      if (swing) {
+        const span = swing.toTimeSec - swing.fromTimeSec;
+        const t = span > 0 ? Math.min(1, Math.max(0, (now - swing.fromTimeSec) / span)) : 1;
+        const eased = easeInOutSine(t);
+        const fromDeg = swing.fromSide === 'left' ? LEFT_ANGLE : RIGHT_ANGLE;
+        const toDeg = swing.toSide === 'left' ? LEFT_ANGLE : RIGHT_ANGLE;
+        angle = fromDeg + (toDeg - fromDeg) * eased;
 
-          // A short, decaying vibration layered on top the instant the tip
-          // arrives at a side (when the tick actually sounds) — the
-          // "wiggle" the tone triggers, distinct from the smooth swing.
-          const sinceArrival = now - swing.toTimeSec;
-          if (sinceArrival >= 0 && sinceArrival < 0.35) {
-            wiggle = Math.exp(-sinceArrival * 14) * Math.sin(sinceArrival * 60) * 4;
-          }
+        const fromPan = swing.fromSide === 'left' ? -1 : 1;
+        const toPan = swing.toSide === 'left' ? -1 : 1;
+        panValue = fromPan + (toPan - fromPan) * eased;
+
+        // A short, decaying vibration layered on top the instant the tip
+        // arrives at a side (when the tick actually sounds) — the
+        // "wiggle" the tone triggers, distinct from the smooth swing.
+        const sinceArrival = now - swing.toTimeSec;
+        if (sinceArrival >= 0 && sinceArrival < 0.35) {
+          wiggle = Math.exp(-sinceArrival * 14) * Math.sin(sinceArrival * 60) * 4;
         }
-        arm.style.transform = `rotate(${angle + wiggle}deg)`;
+      }
+
+      if (arm) arm.style.transform = `rotate(${angle + wiggle}deg)`;
+      onSwingUpdate(panValue);
+
+      // The eye watches the pendulum: look toward wherever the tip
+      // currently is, using the SAME angle (including the wiggle) that
+      // just moved the arm, so the eye reacts to the tick too.
+      if (pupilRef.current) {
+        const angleRad = ((angle + wiggle) * Math.PI) / 180;
+        const tipX = PIVOT.x + ARM_LENGTH * Math.sin(angleRad);
+        const tipY = PIVOT.y + ARM_LENGTH * Math.cos(angleRad);
+        const dx = tipX - EYE.x;
+        const dy = tipY - EYE.y;
+        const dist = Math.hypot(dx, dy) || 1;
+        const offsetX = (dx / dist) * PUPIL_MAX_OFFSET;
+        const offsetY = (dy / dist) * PUPIL_MAX_OFFSET;
+        pupilRef.current.style.transform = `translate(${offsetX}px, ${offsetY}px)`;
       }
 
       drawWaveform();
@@ -191,7 +225,7 @@ export function MetronomeVisual({
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isPlaying, bandInfo.color]);
+  }, [isPlaying, bandInfo.color, onSwingUpdate]);
 
   return (
     <div className="metronome-visual" style={{ '--band-color': bandInfo.color, '--band-glow': bandInfo.glow } as React.CSSProperties}>
@@ -215,7 +249,7 @@ export function MetronomeVisual({
         <g className="metronome-eye">
           <circle cx={EYE.x} cy={EYE.y} r={38} className="eye-outer" />
           <circle cx={EYE.x} cy={EYE.y} r={22} className="eye-iris" />
-          <circle cx={EYE.x} cy={EYE.y} r={9} className="eye-pupil" />
+          <circle ref={pupilRef} cx={EYE.x} cy={EYE.y} r={9} className="eye-pupil" />
         </g>
       </svg>
     </div>

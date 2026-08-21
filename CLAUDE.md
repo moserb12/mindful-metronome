@@ -3,6 +3,50 @@
 This file is read automatically by Claude Code at the start of every session
 in this repo. Keep it up to date as decisions get made.
 
+## Status update — eye tracking + pendulum-synced drone panning + tick ear modes
+
+A follow-up session, right after the initial build, added three related
+features the builder asked for by watching the first version:
+
+- **The eye watches the pendulum.** `MetronomeVisual`'s pupil (`pupilRef`)
+  is offset every animation frame toward the arm's CURRENT tip position
+  (computed from the same angle, wiggle included, that rotates the arm),
+  normalized and clamped to `PUPIL_MAX_OFFSET`. Since the tip is always
+  below the eye, the eye always looks at least somewhat downward, more
+  left/right as the pendulum swings further — written straight to
+  `pupilRef.current.style.transform`, same non-React-state approach as the
+  arm itself.
+- **The drone's L/R balance now continuously tracks the pendulum's
+  position**, not just fixed hard-left/hard-right. `BinauralEngine` split
+  its single `droneGain` into `droneGainLeft`/`droneGainRight` — the two
+  oscillators STAY permanently hard-panned to their own ear (that fixed
+  separation is what makes the binaural beat perceivable at all); what
+  changes is each channel's OWN gain, continuously re-balanced by
+  `updateDroneBalance(panValue)`. The two channels always sum to
+  `droneVolume` — total loudness never pumps, only the balance moves.
+  `panModulationDepth` (0-1, default 0.6, a control in `ControlPanel`)
+  sets how extreme the swing gets: 0 = always 50/50 (modulation off), 1 =
+  full 100/0 <-> 0/100, 0.6 lands on exactly the 80/20 <-> 20/80 example
+  the builder gave. `MetronomeVisual` calls `onSwingUpdate(panValue)` every
+  frame from the SAME swing interpolation that rotates the arm, so the
+  audio balance and the visual position can never drift apart.
+- **Tick ear mode** (`TickEarMode`: `MATCH` / `OPPOSITE` / `BOTH`, a
+  segmented control in `ControlPanel`) controls which ear the percussive
+  tick fires into relative to the drone's current balance: MATCH (default)
+  fires in the ear the pendulum just arrived at (the drone's
+  currently-louder ear); OPPOSITE fires in the drone's currently-quieter
+  ear instead, for a call-and-response feel; BOTH fires centered in both
+  ears regardless of position. Resolved inside `BinauralEngine.
+  resolveTickPan()` from the same `matchSide` the scheduler already computes
+  — no new state needed, just a different pan value for the same tick.
+
+Verified: `tsc` clean, tests still passing, and a live Playwright pass
+confirmed the pupil transform changes every frame and correlates with the
+arm's swing direction, the pan-modulation slider's live "X/Y at the
+extremes" preview updates correctly (20/80 at the default 0.6 depth, 0/100
+at depth 1), and all three tick-ear buttons are clickable/highlight
+correctly — zero console errors.
+
 ## Origin story — spun out of Brain Bridging Beats
 
 This repo is a deliberate fork/reboot, not a from-scratch idea. The

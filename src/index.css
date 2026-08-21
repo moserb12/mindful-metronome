@@ -194,6 +194,8 @@ select {
 .eye-pupil {
   fill: var(--text);
   opacity: 0.85;
+  transform-box: fill-box;
+  transform-origin: center;
 }
 
 .neuron-node {
@@ -296,6 +298,12 @@ select {
   font-variant-numeric: tabular-nums;
   color: var(--text-muted);
 }
+.control-hint {
+  margin: 0;
+  font-size: 0.76rem;
+  line-height: 1.5;
+  color: var(--text-faint);
+}
 
 .preset-row {
   display: flex;
@@ -332,6 +340,30 @@ select {
 
 .tick-sound-select {
   align-self: flex-start;
+}
+
+.ear-mode-row {
+  display: flex;
+  gap: 6px;
+}
+.ear-mode-btn {
+  flex: 1;
+  padding: 7px 8px;
+  border-radius: 10px;
+  border: 1px solid var(--surface-border);
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--text-muted);
+  font-size: 0.76rem;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+.ear-mode-btn:hover {
+  color: var(--text);
+}
+.ear-mode-btn.active {
+  border-color: var(--chip-color, #a78bfa);
+  color: var(--chip-color, #a78bfa);
+  background: color-mix(in srgb, var(--chip-color, #a78bfa) 10%, transparent);
 }
 
 .mixer-row {

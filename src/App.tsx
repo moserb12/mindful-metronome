@@ -28,6 +28,7 @@ export default function App() {
           getAnalyser={engine.getAnalyser}
           lastTickSide={engine.lastTickSide}
           tickCount={engine.tickCount}
+          onSwingUpdate={engine.updateDroneBalance}
         />
 
         <div className="stage-readout">
@@ -47,11 +48,15 @@ export default function App() {
           droneVolume={engine.droneVolume}
           tickVolume={engine.tickVolume}
           noiseVolume={engine.noiseVolume}
+          panModulationDepth={engine.panModulationDepth}
+          tickEarMode={engine.tickEarMode}
           onSetCarrierHz={engine.setCarrierHz}
           onSetBeatHz={engine.setBeatHz}
           onSetBpm={engine.setBpm}
           onSetTickSound={engine.setTickSound}
           onSetVolumes={engine.setVolumes}
+          onSetPanModulationDepth={engine.setPanModulationDepth}
+          onSetTickEarMode={engine.setTickEarMode}
           onApplyPreset={engine.applyPreset}
         />
       </main>

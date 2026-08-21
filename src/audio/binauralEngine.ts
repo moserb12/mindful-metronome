@@ -9,13 +9,17 @@
 //   - DRONE: a continuous binaural pair — one sine in each ear, offset by
 //     `beatHz`. The brain never actually receives that difference tone; it's
 //     synthesized in the auditory brainstem from two real, steady pitches.
-//     This is the "flow state" background layer.
-//   - TICK: short, percussive ticks that alternate ears in time with the
-//     BPM — the literal metronome. Each tick is scheduled at a precise
-//     AudioContext time by a BeatScheduler (src/engine/timing.ts), and
-//     which ear it fires into alternates with the beat index, so the
-//     audio always agrees with the visual arm swinging between the two
-//     "hemisphere" sides.
+//     This is the "flow state" background layer. The LEFT and RIGHT
+//     oscillators are each panned hard to their own ear permanently — that
+//     fixed separation is what makes the beat perceivable at all — but
+//     each has its OWN gain, continuously re-balanced every animation frame
+//     to follow the pendulum's live position (see updateDroneBalance()).
+//     The two gains always sum to `droneVolume`, so the total loudness
+//     stays constant; only the LR balance moves.
+//   - TICK: short, percussive ticks fired once per beat by a BeatScheduler
+//     (src/engine/timing.ts) at a precise AudioContext time. Which ear (or
+//     both) a tick fires into is controlled by `tickEarMode` — see
+//     resolveTickPan() below.
 //
 // A third, quiet PINK NOISE layer is optional texture ("shield") behind
 // both — pure ambience, panned center.
@@ -27,17 +31,35 @@
 
 export type TickSound = 'soft' | 'wood' | 'kick' | 'hihat';
 
+/** How a tick's stereo placement relates to the drone's live L/R balance:
+ *   - MATCH: fires in whichever ear the pendulum just arrived at — the ear
+ *     the drone is CURRENTLY favoring (its gain share is highest there).
+ *   - OPPOSITE: fires in the other ear — the one the drone is currently
+ *     quietest in. A call-and-response between the two layers.
+ *   - BOTH: fires centered, equally in both ears, regardless of the
+ *     pendulum's position. */
+export type TickEarMode = 'MATCH' | 'OPPOSITE' | 'BOTH';
+
 export interface MetronomeParams {
   carrierHz: number;
   beatHz: number;
-  droneVolume: number; // 0-1
+  droneVolume: number; // 0-1, total combined loudness of both drone channels
   tickVolume: number; // 0-1
   noiseVolume: number; // 0-1
   tickSound: TickSound;
+  /** 0 = drone always split 50/50 regardless of pendulum position
+   * (modulation off). 1 = full swing, 100/0 at one extreme to 0/100 at the
+   * other. 0.6 lands on an 80/20 <-> 20/80 swing. See updateDroneBalance(). */
+  panModulationDepth: number;
+  tickEarMode: TickEarMode;
 }
 
 function clamp01(v: number): number {
   return Math.min(1, Math.max(0, v));
+}
+
+function clampPan(v: number): number {
+  return Math.min(1, Math.max(-1, v));
 }
 
 /** Generates a buffer of pink noise (Paul Kellet's refined method — the
@@ -79,12 +101,20 @@ export class BinauralEngine {
   private noiseSource: AudioBufferSourceNode | null = null;
   private readonly pinkNoiseBuffer: AudioBuffer;
 
-  private readonly droneGain: GainNode;
+  /** Per-ear drone gain, so the L/R balance can move independently of the
+   * master droneVolume. Their values always sum to droneVolume. */
+  private readonly droneGainLeft: GainNode;
+  private readonly droneGainRight: GainNode;
   private readonly tickGain: GainNode;
   private readonly noiseGain: GainNode;
 
   private params: MetronomeParams;
   private playing = false;
+  /** Most recent pendulum position, -1 (full left) to 1 (full right).
+   * Retained so setVolumes()/setPanModulationDepth() can immediately
+   * reapply the correct balance without waiting for the next animation
+   * frame's updateDroneBalance() call. */
+  private lastPanValue = 0;
 
   constructor(initialParams: MetronomeParams) {
     const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
@@ -95,9 +125,12 @@ export class BinauralEngine {
     this.analyser.fftSize = 2048;
     this.analyser.connect(this.context.destination);
 
-    this.droneGain = this.context.createGain();
-    this.droneGain.gain.value = initialParams.droneVolume;
-    this.droneGain.connect(this.analyser);
+    this.droneGainLeft = this.context.createGain();
+    this.droneGainRight = this.context.createGain();
+    this.droneGainLeft.gain.value = initialParams.droneVolume / 2;
+    this.droneGainRight.gain.value = initialParams.droneVolume / 2;
+    this.droneGainLeft.connect(this.analyser);
+    this.droneGainRight.connect(this.analyser);
 
     this.tickGain = this.context.createGain();
     this.tickGain.gain.value = initialParams.tickVolume;
@@ -127,14 +160,14 @@ export class BinauralEngine {
     this.oscLeft.frequency.value = this.params.carrierHz;
     const panLeft = this.context.createStereoPanner();
     panLeft.pan.value = -1;
-    this.oscLeft.connect(panLeft).connect(this.droneGain);
+    this.oscLeft.connect(panLeft).connect(this.droneGainLeft);
 
     this.oscRight = this.context.createOscillator();
     this.oscRight.type = 'sine';
     this.oscRight.frequency.value = this.params.carrierHz + this.params.beatHz;
     const panRight = this.context.createStereoPanner();
     panRight.pan.value = 1;
-    this.oscRight.connect(panRight).connect(this.droneGain);
+    this.oscRight.connect(panRight).connect(this.droneGainRight);
 
     this.oscLeft.start();
     this.oscRight.start();
@@ -144,6 +177,8 @@ export class BinauralEngine {
     this.noiseSource.loop = true;
     this.noiseSource.connect(this.noiseGain);
     this.noiseSource.start();
+
+    this.applyDroneBalance();
   }
 
   /** Stop the drone + noise. The tick layer is unaffected — it's driven
@@ -174,7 +209,7 @@ export class BinauralEngine {
     this.params.droneVolume = droneVolume;
     this.params.tickVolume = tickVolume;
     this.params.noiseVolume = noiseVolume;
-    this.droneGain.gain.setTargetAtTime(clamp01(droneVolume), this.context.currentTime, 0.03);
+    this.applyDroneBalance();
     this.tickGain.gain.setTargetAtTime(clamp01(tickVolume), this.context.currentTime, 0.03);
     this.noiseGain.gain.setTargetAtTime(clamp01(noiseVolume), this.context.currentTime, 0.03);
   }
@@ -183,19 +218,69 @@ export class BinauralEngine {
     this.params.tickSound = tickSound;
   }
 
+  setTickEarMode(mode: TickEarMode): void {
+    this.params.tickEarMode = mode;
+  }
+
+  setPanModulationDepth(depth: number): void {
+    this.params.panModulationDepth = clamp01(depth);
+    this.applyDroneBalance();
+  }
+
   /**
-   * Play one metronome tick, panned fully to `side`, at a precise
-   * pre-scheduled AudioContext time — never "now" (see
-   * src/engine/timing.ts's TimeDomainSync for why real-time scheduling
-   * matters). This is what makes the ear alternate in sync with the visual
-   * arm: the caller decides left/right from the same beat index driving
-   * the arm's swing.
+   * Re-balance the two drone channels for the pendulum's CURRENT position.
+   * Called every animation frame from the visual (see MetronomeVisual),
+   * using the exact same swing interpolation that drives the arm's
+   * rotation — so the ear balance moves in lockstep with what's on screen,
+   * never a separate/approximate timer.
+   *
+   * `panValue` is -1 (pendulum at the left hemisphere) to 1 (right). At
+   * panModulationDepth 0 the split stays 50/50 regardless of position
+   * (modulation off); at 1 it swings fully between 100/0 and 0/100. The
+   * two channels always sum to droneVolume, so total loudness never pumps
+   * up or down — only the balance between ears moves.
    */
-  playTick(side: 'left' | 'right', atTimeSec: number): void {
+  updateDroneBalance(panValue: number): void {
+    this.lastPanValue = clampPan(panValue);
+    this.applyDroneBalance();
+  }
+
+  private applyDroneBalance(): void {
+    const rightShare = 0.5 + 0.5 * this.params.panModulationDepth * this.lastPanValue;
+    const leftShare = 1 - rightShare;
+    const total = clamp01(this.params.droneVolume);
+    this.droneGainLeft.gain.setTargetAtTime(total * leftShare, this.context.currentTime, 0.05);
+    this.droneGainRight.gain.setTargetAtTime(total * rightShare, this.context.currentTime, 0.05);
+  }
+
+  /** Which ear(s) the tick fires into, given `matchSide` — the ear the
+   * pendulum just arrived at (the drone's currently-favored ear). Resolves
+   * `tickEarMode` into an actual pan value: -1 full left, 0 centered/both,
+   * 1 full right. */
+  private resolveTickPan(matchSide: 'left' | 'right'): number {
+    switch (this.params.tickEarMode) {
+      case 'BOTH':
+        return 0;
+      case 'OPPOSITE':
+        return matchSide === 'left' ? 1 : -1;
+      case 'MATCH':
+      default:
+        return matchSide === 'left' ? -1 : 1;
+    }
+  }
+
+  /**
+   * Play one metronome tick at a precise pre-scheduled AudioContext time —
+   * never "now" (see src/engine/timing.ts's TimeDomainSync for why
+   * real-time scheduling matters). `matchSide` is the ear the pendulum's
+   * arm just arrived at; where the tick actually fires depends on
+   * `tickEarMode` (see resolveTickPan()).
+   */
+  playTick(matchSide: 'left' | 'right', atTimeSec: number): void {
     const osc = this.context.createOscillator();
     const gain = this.context.createGain();
     const panner = this.context.createStereoPanner();
-    panner.pan.value = side === 'left' ? -1 : 1;
+    panner.pan.value = this.resolveTickPan(matchSide);
 
     osc.connect(gain).connect(panner).connect(this.tickGain);
 
