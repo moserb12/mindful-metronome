@@ -59,7 +59,6 @@ export default function App() {
           getAnalyser={engine.getAnalyser}
           lastTickSide={engine.lastTickSide}
           tickCount={engine.tickCount}
-          onSwingUpdate={engine.updateDroneBalance}
           bpm={engine.bpm}
           onSetBpm={engine.setBpm}
           sessionRef={engine.sessionRef}
@@ -124,6 +123,10 @@ export default function App() {
 
       <footer className="app-footer">
         <p>Headphones recommended for the binaural layer. Mindful Metronome is free — use it as much as you like.</p>
+        <a href="https://bradenmoser.com" target="_blank" rel="noopener noreferrer" className="built-by-link">
+          <img src="/bbm-favicon.png" alt="" width={14} height={14} />
+          built by BBM
+        </a>
       </footer>
     </div>
   );

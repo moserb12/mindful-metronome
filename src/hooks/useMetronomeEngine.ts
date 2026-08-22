@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { BeatScheduler } from '../engine/timing';
 import { BinauralEngine, type NoiseType, type TickEarMode, type TickSound, type TickSubdivision } from '../audio/binauralEngine';
-import { classifyBeatFrequency, DEFAULT_PRESET } from '../data/bands';
+import { classifyBeatFrequency, DEFAULT_PRESET, MAX_BPM, MIN_BPM } from '../data/bands';
+import { MOOD_BY_BAND } from '../data/moods';
+import { clamp } from '../engine/motion';
 import { loadSettings, saveSettings } from '../storage/settingsStorage';
 import { decodeSettingsFromSearchParams, encodeSettingsToSearchParams, hasAnyCoreTuningParams } from '../urlState';
 
@@ -356,6 +358,30 @@ export function useMetronomeEngine() {
     if (playsEnd) engine.playTick(side, beat.timeSec);
     if (playsCenter) engine.playCenterTick(centerTimeSec);
 
+    // Pre-schedule the drone's L/R swing curve for the segment THIS beat
+    // starts (side -> opposite side, ending at the next beat) — see
+    // BinauralEngine.scheduleDroneSwing()'s doc comment for why this
+    // replaced pushing panValue every requestAnimationFrame from the
+    // visual: rAF is throttled to near-zero (or fully paused) in a
+    // backgrounded tab, which used to freeze the drone's stereo balance
+    // entirely instead of continuing to oscillate. Scheduling it here,
+    // from the same trigger that already reliably schedules ticks in the
+    // background, makes it genuinely audio-graph-native and immune to
+    // that throttling. hangWeight mirrors the visual's own formula
+    // exactly (mood.easeHangTime blended with live tempo).
+    const band = classifyBeatFrequency(paramsRef.current.beatHz);
+    const mood = MOOD_BY_BAND[band];
+    const tempoT = (paramsRef.current.bpm - MIN_BPM) / (MAX_BPM - MIN_BPM);
+    const hangWeight = clamp(mood.easeHangTime - 0.35 * tempoT, 0.05, 0.95);
+    const toSide = oppositeSide(side);
+    engine.scheduleDroneSwing(
+      side === 'left' ? -1 : 1,
+      toSide === 'left' ? -1 : 1,
+      hangWeight,
+      beat.timeSec,
+      beat.timeSec + secondsPerBeat
+    );
+
     // Flip the wiggle/React-state trigger at the moment each tick actually
     // SOUNDS, not when it was merely scheduled (which is ~100ms early) —
     // a few ms of setTimeout jitter is invisible on a cosmetic wiggle, and
@@ -636,13 +662,6 @@ export function useMetronomeEngine() {
     setHapticsEnabledState(enabled);
   }, []);
 
-  /** Called every animation frame by the visual, using the exact swing
-   * position that also drives the arm's rotation — see the long comment at
-   * the top of this file for why this bypasses React state entirely. */
-  const updateDroneBalance = useCallback((panValue: number) => {
-    engineRef.current?.updateDroneBalance(panValue);
-  }, []);
-
   const applyPreset = useCallback(
     (preset: ApplyablePresetFields) => {
       setCarrierHz(preset.carrierHz);
@@ -801,7 +820,6 @@ export function useMetronomeEngine() {
     setTickSubdivision,
     setHapticsEnabled,
     setSessionDurationMinutes,
-    updateDroneBalance,
     applyPreset,
     getShareableLink,
   };

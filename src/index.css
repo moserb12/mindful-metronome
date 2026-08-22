@@ -422,14 +422,12 @@ select:hover {
 /* ---------- Eye clock face (active while a timed session is running) ---------- */
 
 .eye-clock-ticks,
-.eye-clock-ring-group,
 .eye-clock-text {
   opacity: 0;
   transition: opacity var(--dur-slow) var(--ease-soft);
   pointer-events: none;
 }
 .metronome-eye.has-session .eye-clock-ticks,
-.metronome-eye.has-session .eye-clock-ring-group,
 .metronome-eye.has-session .eye-clock-text {
   opacity: 1;
 }
@@ -442,20 +440,24 @@ select:hover {
   stroke: rgba(255, 255, 255, 0.5);
   stroke-width: 1.5;
 }
-/* Rotated -90deg so a 0 dash-offset starts at 12 o'clock (matching
-   clockPoint()'s own clock-face convention) and sweeps clockwise as
-   stroke-dashoffset counts down — see the ring-fill comment in
-   MetronomeVisual.tsx's rAF loop. */
-.eye-clock-ring-group {
-  transform-origin: 200px 224px;
-  transform: rotate(-90deg);
+/* The iris timer fill — a pie wedge that starts at the session's own
+   fraction of the hour dial and shrinks toward nothing as time runs out
+   (see buildWedgePathD()'s doc comment). Sits ON TOP of the tick marks in
+   paint order, so 0.8 (not 1) opacity is what keeps them visible through
+   it — "easy to see the timer, but the lines underneath still read." */
+.eye-clock-wedge {
+  fill: var(--band-color, #a78bfa);
+  opacity: 0;
+  /* Only opacity transitions — `d` is rewritten every rAF frame via
+     setAttribute (see MetronomeVisual.tsx), already smooth at 60fps; a
+     CSS transition on `d` too would lag behind those precise per-frame
+     writes instead of tracking them, the same class of bug fixed for the
+     pupil/settle-tail race in an earlier pass. */
+  transition: opacity var(--dur-slow) var(--ease-soft);
+  pointer-events: none;
 }
-.eye-clock-ring {
-  fill: none;
-  stroke: var(--band-color, #a78bfa);
-  stroke-width: 3;
-  stroke-linecap: round;
-  filter: drop-shadow(0 0 4px var(--band-glow, rgba(167, 139, 250, 0.6)));
+.metronome-eye.has-session .eye-clock-wedge {
+  opacity: 0.8;
 }
 .eye-clock-text {
   fill: var(--text);
@@ -1109,6 +1111,22 @@ select:hover {
   color: var(--text-faint);
   font-size: 0.78rem;
 }
+.built-by-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 8px;
+  color: var(--text-faint);
+  font-size: 0.72rem;
+  text-decoration: none;
+  transition: color var(--dur-base) var(--ease-soft);
+}
+.built-by-link:hover {
+  color: var(--text-muted);
+}
+.built-by-link img {
+  border-radius: 3px;
+}
 
 /* ---------- Crash recovery (ErrorBoundary) ---------- */
 
@@ -1187,7 +1205,7 @@ select:hover {
     transition: none;
   }
   .eye-clock-ticks,
-  .eye-clock-ring-group,
+  .eye-clock-wedge,
   .eye-clock-text {
     transition: none;
   }

@@ -39,6 +39,8 @@
 // wrapper around it.
 // ============================================================================
 
+import { pendulumEase } from '../engine/motion';
+
 export type TickSound = 'soft' | 'wood' | 'kick' | 'hihat';
 
 /** Which noise-shield texture plays behind the drone/tick layers. See
@@ -72,6 +74,28 @@ export type TickSubdivision = 'ENDS' | 'ENDS_AND_CENTER' | 'CENTER';
  * recognizable subdivision-click character rather than "turned up to
  * compensate" when it's the only sound playing. */
 const CENTER_TICK_GAIN_SCALE = 0.55;
+
+/** Extra time, past each tickSound's own decay, spent linearly ramping
+ * the gain the rest of the way down to an exact 0 before the oscillator
+ * is stopped — see fireTickOscillator()'s doc comment for why this needs
+ * to reach TRUE silence, not just "quiet," to avoid an audible click.
+ * Short enough to be inaudible as its own event on any tickSound. */
+const TICK_RELEASE_TAIL_SEC = 0.005;
+
+/** How long stop() spends fading the drone + noise gains to true silence
+ * before stopping their oscillators/buffer source — see stop()'s doc
+ * comment. Short enough to feel instant (this is still the "manual
+ * Pause/Stop is audio-instant" behavior, not a graceful fade like a
+ * session's own beginSessionFadeOut()), long enough to guarantee a
+ * click-free stop regardless of waveform phase. */
+const DRONE_STOP_RELEASE_SEC = 0.03;
+
+/** How many points sample pendulumEase()'s curve per scheduled swing
+ * segment in scheduleDroneSwing() — enough to render the eased shape
+ * smoothly (Web Audio linearly interpolates BETWEEN curve samples) at
+ * any tempo this app supports, without generating an excessive number of
+ * automation points every beat. */
+const DRONE_SWING_CURVE_SAMPLES = 24;
 
 export interface MetronomeParams {
   carrierHz: number;
@@ -268,9 +292,30 @@ export class BinauralEngine {
   stop(): void {
     if (!this.playing) return;
     this.playing = false;
-    this.oscLeft?.stop();
-    this.oscRight?.stop();
-    this.noiseSource?.stop();
+
+    // Fade each channel's gain to TRUE silence before stopping the
+    // oscillator/buffer source feeding it — `oscLeft.stop()` etc. used to
+    // be called with no scheduled time at all, cutting the drone's
+    // continuous tones (and the noise buffer) off at whatever waveform
+    // amplitude they happened to be at that exact instant. That's an
+    // audible click every single time Pause/Stop is pressed, the same
+    // root cause as the tick-release fix above — a genuine discontinuity
+    // in the waveform, not just a loudness question. `cancelScheduledValues`
+    // + re-pinning the current value first (rather than a bare ramp call)
+    // matches this file's existing pattern elsewhere (see masterGain's
+    // handling below) for correctly interrupting any automation already
+    // in flight — the drone's own live swing-pan curve (scheduleDroneSwing())
+    // included.
+    const now = this.context.currentTime;
+    const stopAtSec = now + DRONE_STOP_RELEASE_SEC;
+    [this.droneGainLeft, this.droneGainRight, this.noiseGain].forEach((gainNode) => {
+      gainNode.gain.cancelScheduledValues(now);
+      gainNode.gain.setValueAtTime(gainNode.gain.value, now);
+      gainNode.gain.linearRampToValueAtTime(0, stopAtSec);
+    });
+    this.oscLeft?.stop(stopAtSec);
+    this.oscRight?.stop(stopAtSec);
+    this.noiseSource?.stop(stopAtSec);
     this.oscLeft = null;
     this.oscRight = null;
     this.noiseSource = null;
@@ -408,21 +453,49 @@ export class BinauralEngine {
   }
 
   /**
-   * Re-balance the two drone channels for the pendulum's CURRENT position.
-   * Called every animation frame from the visual (see MetronomeVisual),
-   * using the exact same swing interpolation that drives the arm's
-   * rotation — so the ear balance moves in lockstep with what's on screen,
-   * never a separate/approximate timer.
+   * Pre-schedules the ENTIRE drone L/R balance curve for one swing
+   * segment (one beat's worth of pendulum travel), sampling
+   * `pendulumEase()`'s exact shape into native Web Audio automation
+   * curves via `setValueCurveAtTime` — called once per beat from
+   * `handleBeatScheduled` (`useMetronomeEngine.ts`), the SAME trigger
+   * that already reliably schedules ticks in the background, rather than
+   * being pushed continuously from the visual's `requestAnimationFrame`
+   * loop every frame (the previous design). That distinction is what
+   * makes the drone's stereo balance keep oscillating even when the tab
+   * is backgrounded: `requestAnimationFrame` is throttled to near-zero
+   * (or fully paused) in a hidden tab, but a curve committed ahead of
+   * time to the audio graph plays out entirely on the audio rendering
+   * thread, immune to ANY main-thread timer throttling — including the
+   * throttling that eventually catches even `setInterval` in a long-
+   * hidden tab (which is why this needed to be genuine audio-graph
+   * automation, not just a `setInterval`-driven fallback).
    *
-   * `panValue` is -1 (pendulum at the left hemisphere) to 1 (right). At
-   * panModulationDepth 0 the split stays 50/50 regardless of position
-   * (modulation off); at 1 it swings fully between 100/0 and 0/100. The
-   * two channels always sum to droneVolume, so total loudness never pumps
-   * up or down — only the balance between ears moves.
+   * `fromPan`/`toPan` are -1 (left hemisphere) to 1 (right) — the same
+   * convention the visual's swing math already uses. `hangWeight` is
+   * `pendulumEase()`'s own shape parameter, computed by the caller from
+   * the current band's mood + live tempo, matching the visual exactly.
    */
-  updateDroneBalance(panValue: number): void {
-    this.lastPanValue = clampPan(panValue);
-    this.applyDroneBalance();
+  scheduleDroneSwing(fromPan: number, toPan: number, hangWeight: number, fromTimeSec: number, toTimeSec: number): void {
+    const duration = toTimeSec - fromTimeSec;
+    if (duration <= 0) return;
+    const total = clamp01(this.params.droneVolume);
+    const leftCurve = new Float32Array(DRONE_SWING_CURVE_SAMPLES);
+    const rightCurve = new Float32Array(DRONE_SWING_CURVE_SAMPLES);
+    for (let i = 0; i < DRONE_SWING_CURVE_SAMPLES; i++) {
+      const t = i / (DRONE_SWING_CURVE_SAMPLES - 1);
+      const eased = pendulumEase(t, hangWeight);
+      const panValue = clampPan(fromPan + (toPan - fromPan) * eased);
+      const rightShare = 0.5 + 0.5 * this.params.panModulationDepth * panValue;
+      leftCurve[i] = total * (1 - rightShare);
+      rightCurve[i] = total * rightShare;
+    }
+    this.droneGainLeft.gain.setValueCurveAtTime(leftCurve, fromTimeSec, duration);
+    this.droneGainRight.gain.setValueCurveAtTime(rightCurve, fromTimeSec, duration);
+    // Kept fresh (best-effort — a beat behind at worst) so
+    // setVolumes()/setPanModulationDepth() below have a reasonable value
+    // to immediately reapply from when a slider's dragged mid-play,
+    // without needing a live per-frame push of their own.
+    this.lastPanValue = toPan;
   }
 
   private applyDroneBalance(): void {
@@ -465,43 +538,52 @@ export class BinauralEngine {
 
     osc.connect(gain).connect(panner).connect(this.tickGain);
 
+    let duration: number;
     switch (this.params.tickSound) {
       case 'wood':
+        duration = 0.03;
         osc.type = 'triangle';
         osc.frequency.setValueAtTime(1200, atTimeSec);
-        osc.frequency.exponentialRampToValueAtTime(100, atTimeSec + 0.03);
+        osc.frequency.exponentialRampToValueAtTime(100, atTimeSec + duration);
         gain.gain.setValueAtTime(0.8 * gainScale, atTimeSec);
-        gain.gain.exponentialRampToValueAtTime(0.001 * gainScale, atTimeSec + 0.03);
-        osc.start(atTimeSec);
-        osc.stop(atTimeSec + 0.03);
         break;
       case 'kick':
+        duration = 0.12;
         osc.type = 'sine';
         osc.frequency.setValueAtTime(150, atTimeSec);
-        osc.frequency.exponentialRampToValueAtTime(30, atTimeSec + 0.12);
+        osc.frequency.exponentialRampToValueAtTime(30, atTimeSec + duration);
         gain.gain.setValueAtTime(1.0 * gainScale, atTimeSec);
-        gain.gain.exponentialRampToValueAtTime(0.001 * gainScale, atTimeSec + 0.12);
-        osc.start(atTimeSec);
-        osc.stop(atTimeSec + 0.12);
         break;
       case 'hihat':
+        duration = 0.02;
         osc.type = 'square';
         osc.frequency.setValueAtTime(4000, atTimeSec);
         gain.gain.setValueAtTime(0.3 * gainScale, atTimeSec);
-        gain.gain.exponentialRampToValueAtTime(0.001 * gainScale, atTimeSec + 0.02);
-        osc.start(atTimeSec);
-        osc.stop(atTimeSec + 0.02);
         break;
       case 'soft':
       default:
+        duration = 0.08;
         osc.type = 'sine';
         osc.frequency.setValueAtTime(this.params.carrierHz, atTimeSec);
         gain.gain.setValueAtTime(0.7 * gainScale, atTimeSec);
-        gain.gain.exponentialRampToValueAtTime(0.001 * gainScale, atTimeSec + 0.08);
-        osc.start(atTimeSec);
-        osc.stop(atTimeSec + 0.08);
         break;
     }
+
+    // Click-free release, shared by every tickSound: ride the exponential
+    // decay down close to silence, then finish with a short LINEAR ramp
+    // to an exact 0 (an exponential ramp can only ever approach zero,
+    // never reach it — the old code stopped the oscillator right at the
+    // exponential ramp's end, which meant `osc.stop()` cut the waveform
+    // off at whatever nonzero amplitude the oscillator's own phase
+    // happened to be at that instant — a genuine discontinuity, audible
+    // as a click regardless of how quiet the gain had gotten). Stopping
+    // only once the gain has actually reached true silence removes that
+    // discontinuity entirely.
+    const stopAtSec = atTimeSec + duration;
+    gain.gain.exponentialRampToValueAtTime(0.0001, stopAtSec);
+    gain.gain.linearRampToValueAtTime(0, stopAtSec + TICK_RELEASE_TAIL_SEC);
+    osc.start(atTimeSec);
+    osc.stop(stopAtSec + TICK_RELEASE_TAIL_SEC);
   }
 
   /**

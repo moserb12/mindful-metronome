@@ -3,6 +3,82 @@
 This file is read automatically by Claude Code at the start of every session
 in this repo. Keep it up to date as decisions get made.
 
+## Status update — iris timer redesign, background-tab audio fixes, footer link
+
+**Iris timer now shrinks, not grows.** The builder wanted to read
+remaining time at a glance the way a pie-timer works: start filled to
+the session's own fraction of an hour, shrink toward nothing as it runs
+out. `MetronomeVisual.tsx`'s ring (`stroke-dasharray`/`-dashoffset` arc)
+is now a genuine filled pie WEDGE (`buildWedgePathD()`, a `M center L
+edgePoint A r r 0 largeArc 1 endPoint Z` path), sized off
+`remainingSec / 3600 * 360` instead of `elapsedSec / 3600` — a 15-min
+session starts at exactly a 90° (1/4) wedge and shrinks to 0 exactly when
+it ends, no special-casing needed for the same reason the old
+growing-ring didn't need any either. Radius widened to 36 (covering the
+tick band, not just the iris disc) and rendered at 0.8 opacity (not 1) —
+it sits on top of the tick marks in paint order, so the reduced opacity
+is what keeps them "visible underneath," per the builder's explicit ask.
+`.eye-clock-wedge`'s CSS only transitions `opacity` (the fade in/out on
+session start/end) — NOT `d`, which is rewritten every rAF frame via
+`setAttribute` already, and a CSS transition on top of that would lag
+behind the precise per-frame value instead of tracking it (the same class
+of bug the settle-tail/mouse-tracking race fix from an earlier pass
+avoided).
+
+**Two real audio bugs, both root-caused and fixed in `binauralEngine.ts`:**
+
+- **Occasional clicking artifacts.** Two separate but same-shaped bugs:
+  (1) `fireTickOscillator()` stopped each tick oscillator the INSTANT its
+  exponential gain ramp reached its target — but an exponential ramp can
+  only ever *approach* zero, never reach it, so `osc.stop()` was cutting
+  the waveform off at whatever nonzero amplitude it happened to be at,
+  a genuine discontinuity (audible as a click) regardless of how quiet it
+  had gotten. (2) `BinauralEngine.stop()` (Pause/Stop) called
+  `oscLeft.stop()`/`oscRight.stop()`/`noiseSource.stop()` with NO
+  scheduled time at all — stopping a continuous tone mid-waveform on
+  every single Pause. Both fixed the same way: ride the existing decay
+  down close to silence, then finish with a short LINEAR ramp to an
+  EXACT 0 (`TICK_RELEASE_TAIL_SEC`/`DRONE_STOP_RELEASE_SEC`), and only
+  stop the oscillator/source once the gain has actually reached true
+  silence. Verified live (instrumented `OscillatorNode.stop`/
+  `AudioParam.linearRampToValueAtTime`) that every stop now carries a
+  real scheduled time and a matching ramp-to-exactly-0 immediately
+  before it.
+- **Drone panning froze when the tab lost focus.** Root cause: the
+  drone's L/R balance was pushed every `requestAnimationFrame` from
+  `MetronomeVisual.tsx` — and `requestAnimationFrame` is throttled to
+  near-zero (or fully paused) in a backgrounded tab, unlike
+  `BeatScheduler`'s `setInterval`-driven tick scheduling, which is why
+  ticks kept playing while panning silently stopped oscillating. Fix:
+  `BinauralEngine.scheduleDroneSwing()` pre-schedules the ENTIRE swing
+  segment's L/R balance curve via native Web Audio
+  `setValueCurveAtTime` (sampling `pendulumEase()`'s exact shape,
+  `DRONE_SWING_CURVE_SAMPLES` points), called once per beat from
+  `useMetronomeEngine.ts`'s `handleBeatScheduled` — the SAME trigger
+  that already reliably schedules ticks in the background — instead of
+  from the visual's rAF loop. This is genuinely audio-graph-native, so
+  it's immune not just to rAF throttling but to the `setInterval`
+  throttling that eventually catches even background tabs long enough
+  (which is why a `setInterval`-based fallback wouldn't have been a real
+  fix, only a band-aid with the same eventual failure mode). Verified
+  live with `requestAnimationFrame` killed entirely (a harsher test than
+  a real backgrounded tab, which still gets *throttled* rAF, not zero):
+  the drone's pan curve kept scheduling correctly throughout, growing
+  call-count over time, while the visual arm's `transform` genuinely
+  never updated — confirming the two are now fully independent.
+  `onSwingUpdate`/`updateDroneBalance` (the old per-frame push,
+  `MetronomeVisualProps`, and the hook's returned API) are gone entirely
+  — nothing calls them anymore. `applyDroneBalance()`/`lastPanValue`
+  stay, still used by `setVolumes()`/`setPanModulationDepth()` for
+  immediate slider-drag feedback (now kept "fresh enough" — within one
+  beat — by `scheduleDroneSwing()` setting `lastPanValue` to each
+  segment's target, rather than a live per-frame push).
+
+**Footer**: a small "built by BBM" link to bradenmoser.com, with that
+site's own favicon (fetched once and committed to
+`public/bbm-favicon.png` — same "no network asset loading from inside
+the app" philosophy as the bundled fonts, not hotlinked at runtime).
+
 ## Status update — fixed a real latency bug: Sound effect / Beat pattern took up to 3s to change
 
 The builder reported a "pretty long delay" after changing the tick sound

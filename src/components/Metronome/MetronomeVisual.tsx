@@ -33,15 +33,14 @@ const BASE_WAVE_AMPLITUDE = 2.5;
  * layers don't currently share constants) so the off-beat accent reads
  * as visually "quieter" in lockstep with how it sounds quieter. */
 const CENTER_WIGGLE_SCALE = 0.55;
-/** Radius of the iris fill-ring showing session progress against a fixed
- * 60-minute dial — see the ring-fill comment in the rAF loop below.
- * Deliberately BETWEEN the iris (r=22) and the tick-mark ring (r=23-37,
- * see CLOCK_TICKS below). */
-const CLOCK_RING_RADIUS = 28;
-const CLOCK_RING_CIRCUMFERENCE = 2 * Math.PI * CLOCK_RING_RADIUS;
-/** The fixed reference the iris ring fills against — NOT the session's own
- * duration. Because SessionState.durationSec already equals
- * `minutes * 60`, `elapsedSec / HOUR_DIAL_SEC` alone lands exactly on
+/** Radius of the iris fill-wedge showing session time remaining against a
+ * fixed 60-minute dial — see the wedge comment in the rAF loop below.
+ * Reaches out to just inside the eye-outer ring (r=38) so it visibly
+ * covers the tick marks (r=23-37) too, not just the iris disc. */
+const CLOCK_WEDGE_RADIUS = 36;
+/** The fixed reference the iris wedge is sized against — NOT the
+ * session's own duration. Because SessionState.durationSec already equals
+ * `minutes * 60`, `durationSec / HOUR_DIAL_SEC` alone lands exactly on
  * 0.25/0.5/0.75/1.0 at 15/30/45/60 minutes, with zero special-casing. */
 const HOUR_DIAL_SEC = 3600;
 
@@ -65,17 +64,21 @@ const HOUR_DIAL_SEC = 3600;
 // (src/data/moods.ts — sleepy/chill/peaceful/happy/energized), the swing
 // uses a more physically-weighted easing curve, the rod resonates with a
 // traveling snake-wave tied to BPM, and motion eases in on Play and
-// settles out on Pause/Stop. NONE of this changes WHEN a beat lands or
-// what BinauralEngine hears: the ramp/mood/wave math only reshapes the
-// RENDERED swing, never `panValue` (fed to onSwingUpdate at full
-// amplitude, every frame, exactly as before).
+// settles out on Pause/Stop. NONE of this changes WHEN a beat lands: the
+// ramp/mood/wave math only reshapes the RENDERED swing. The drone's
+// actual audio pan is NOT driven from here at all — see
+// BinauralEngine.scheduleDroneSwing(), pre-scheduled per-beat from
+// useMetronomeEngine.ts's handleBeatScheduled, independent of this rAF
+// loop (which the browser throttles or pauses entirely in a backgrounded
+// tab — audio panning needs to keep going regardless).
 //
 // The pupil ALWAYS tracks the pendulum's tip (or the cursor, while idle)
 // — it never stops doing that job, session or no session. While a timed
-// session is running, the IRIS itself becomes a fill-ring showing progress
-// against a fixed 60-minute dial (so a 15-min session ends with the ring
-// exactly 1/4 full, 30 min at half, etc.), with a numeral readout alongside
-// it — a separate visual layer from the pupil, not a replacement for it.
+// session is running, the IRIS itself becomes a fill-wedge showing time
+// remaining against a fixed 60-minute dial (a 15-min session starts
+// filled to exactly 1/4 and shrinks to nothing as it runs out, 30 min at
+// half, etc.), with a numeral readout alongside it — a separate visual
+// layer from the pupil, not a replacement for it.
 // ============================================================================
 
 const VIEW = 400;
@@ -119,6 +122,23 @@ const ARM_LENGTH = Math.hypot(BASE_LEFT.x - PIVOT.x, BASE_LEFT.y - PIVOT.y);
 function clockPoint(angleDeg: number, radius: number): { x: number; y: number } {
   const rad = (angleDeg * Math.PI) / 180;
   return { x: EYE.x + radius * Math.sin(rad), y: EYE.y - radius * Math.cos(rad) };
+}
+
+/** Builds a filled pie-wedge `d` string spanning clockwise from 12 o'clock
+ * to `sweepDeg` degrees, radius CLOCK_WEDGE_RADIUS — the iris timer's
+ * fill. `sweepDeg` is `remainingSec / HOUR_DIAL_SEC * 360`, so the wedge
+ * starts at the session's OWN fraction of the hour dial (a 15-min session
+ * starts filled to exactly 1/4) and shrinks toward nothing as time runs
+ * out, reaching 0 exactly when the session ends — the mirror image of
+ * the 12 CLOCK_TICKS' own always-static hour-dial framing. Clamped just
+ * under 360 because an SVG arc command can't represent a true full circle
+ * (identical start/end points render as nothing, not a full circle). */
+function buildWedgePathD(sweepDeg: number): string {
+  const clamped = Math.max(0, Math.min(sweepDeg, 359.9));
+  const start = clockPoint(0, CLOCK_WEDGE_RADIUS);
+  const end = clockPoint(clamped, CLOCK_WEDGE_RADIUS);
+  const largeArc = clamped > 180 ? 1 : 0;
+  return `M ${EYE.x} ${EYE.y} L ${start.x} ${start.y} A ${CLOCK_WEDGE_RADIUS} ${CLOCK_WEDGE_RADIUS} 0 ${largeArc} 1 ${end.x} ${end.y} Z`;
 }
 
 /** 12 static clock-face tick marks, precomputed once at module load (same
@@ -286,12 +306,6 @@ interface MetronomeVisualProps {
   getAnalyser: () => AnalyserNode | null;
   lastTickSide: 'left' | 'right' | null;
   tickCount: number;
-  /** Called every animation frame with the pendulum's current position
-   * (-1 full left .. 1 full right), so the drone's L/R balance can track
-   * it continuously — see BinauralEngine.updateDroneBalance(). ALWAYS
-   * full amplitude, even during the visual ramp-in/settle-out — see the
-   * rAF loop below. */
-  onSwingUpdate: (panValue: number) => void;
   bpm: number;
   onSetBpm: (bpm: number) => void;
   /** Raw session reference (or null when no timed session is armed) — read
@@ -323,7 +337,6 @@ export function MetronomeVisual({
   getAnalyser,
   lastTickSide,
   tickCount,
-  onSwingUpdate,
   bpm,
   onSetBpm,
   sessionRef,
@@ -334,7 +347,7 @@ export function MetronomeVisual({
   const armRef = useRef<SVGGElement | null>(null);
   const armPathRef = useRef<SVGPathElement | null>(null);
   const pupilRef = useRef<SVGCircleElement | null>(null);
-  const ringRef = useRef<SVGCircleElement | null>(null);
+  const wedgeRef = useRef<SVGPathElement | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const smoothedRef = useRef<number[] | null>(null);
@@ -535,13 +548,11 @@ export function MetronomeVisual({
       // attribute set imperatively like this without reintroducing the
       // exact cross-browser ambiguity that convention exists to avoid.
       //
-      // This is purely a rendering-layer tail: onSwingUpdate(0) still
-      // fires at the identical moment it always has (synchronously, right
-      // here), so the manual-Pause/Stop-is-audio-instant invariant is
-      // completely untouched by this — only the arm/pupil/wave's
-      // RENDERED decay is new.
-      onSwingUpdate(0);
-
+      // This is purely a rendering-layer tail — the manual-Pause/Stop-is-
+      // audio-instant invariant lives entirely in BinauralEngine.stop()
+      // now (its own short click-free release ramp), completely
+      // independent of this decay; only the arm/pupil/wave's RENDERED
+      // settle is what this loop drives.
       const startAngle = lastAngleRef.current;
       const startAmplitude = lastWaveAmplitudeRef.current;
 
@@ -579,9 +590,8 @@ export function MetronomeVisual({
     }
 
     // Ramp-in: captured ONCE per Play press (this effect only re-runs when
-    // isPlaying/bandInfo.color/onSwingUpdate change — a mid-play setBpm()
-    // does not re-run it, so dragging the tempo weight never re-triggers
-    // a ramp).
+    // isPlaying/bandInfo.color change — a mid-play setBpm() does not
+    // re-run it, so dragging the tempo weight never re-triggers a ramp).
     const rampStartSec = getAudioTimeSec();
 
     function frame() {
@@ -594,7 +604,6 @@ export function MetronomeVisual({
 
       let angle = 0;
       let wiggle = 0;
-      let panValue = 0;
       if (swing) {
         // computeSwingSegment derives which segment "now" falls into (and
         // how far through it) by pure elapsed-time arithmetic against a
@@ -613,11 +622,13 @@ export function MetronomeVisual({
 
         // A more physically-weighted curve than plain sine, blended by the
         // band's mood AND the live tempo — see pendulumEase()'s doc
-        // comment in engine/motion.ts. `eased` (the SHAPE) is shared by
-        // BOTH the angle and panValue below, so the audio pan and the
-        // rendered swing always agree on TIMING; only angle's FINAL
-        // rendered value additionally gets `* rampIn` further down —
-        // panValue never does.
+        // comment in engine/motion.ts. Also matched, formula-for-formula
+        // (mood + live tempo -> hangWeight -> pendulumEase shape), by
+        // BinauralEngine.scheduleDroneSwing()'s audio-side curve, computed
+        // independently in useMetronomeEngine.ts's handleBeatScheduled —
+        // the two are no longer fed by the same per-frame value (see this
+        // file's header comment for why), so keeping the FORMULA in sync
+        // is what keeps the rendered swing and the audible pan agreeing.
         const tempoT = (bpm - MIN_BPM) / (MAX_BPM - MIN_BPM);
         const hangWeight = clamp(mood.easeHangTime - 0.35 * tempoT, 0.05, 0.95);
         const eased = pendulumEase(t, hangWeight);
@@ -625,10 +636,6 @@ export function MetronomeVisual({
         const fromDeg = segment.fromSide === 'left' ? LEFT_ANGLE : RIGHT_ANGLE;
         const toDeg = segment.toSide === 'left' ? LEFT_ANGLE : RIGHT_ANGLE;
         angle = fromDeg + (toDeg - fromDeg) * eased;
-
-        const fromPan = segment.fromSide === 'left' ? -1 : 1;
-        const toPan = segment.toSide === 'left' ? -1 : 1;
-        panValue = fromPan + (toPan - fromPan) * eased;
 
         // A short, decaying vibration layered on top the instant a tick
         // actually sounds — the "wiggle" the tone triggers, distinct from
@@ -659,7 +666,6 @@ export function MetronomeVisual({
       const totalAngle = (angle + wiggle) * rampIn;
       lastAngleRef.current = totalAngle;
       if (arm) arm.setAttribute('transform', `rotate(${totalAngle} ${PIVOT.x} ${PIVOT.y})`);
-      onSwingUpdate(panValue); // full amplitude, always — never scaled by rampIn
 
       // Snake-wave resonance along the rod, tied to bpm and the band's
       // mood — phase derived from the absolute audio clock (not
@@ -678,16 +684,20 @@ export function MetronomeVisual({
       // iris fill-ring below, not in the pupil.
       setPupilFromAngle(totalAngle);
 
-      // Iris fill-ring: read `sessionRef.current` directly (fresh every
+      // Iris fill-wedge: read `sessionRef.current` directly (fresh every
       // frame, see the prop's doc comment above) rather than the polled
-      // `sessionPhase` prop. `elapsedSec / HOUR_DIAL_SEC` alone gives the
-      // exact fill fraction against the fixed 60-minute dial — see
-      // HOUR_DIAL_SEC's doc comment for why no further scaling is needed.
+      // `sessionPhase` prop. Starts filled to the session's OWN fraction
+      // of the hour dial (durationSec/HOUR_DIAL_SEC — a 15-min session
+      // starts at exactly 1/4) and shrinks as remainingSec counts down,
+      // reaching empty exactly when the session ends — the builder wants
+      // to read "how much time is left" directly off the wedge shrinking,
+      // not a fill growing toward some eventual size.
       const session = sessionRef.current;
-      if (session && ringRef.current) {
+      if (session && wedgeRef.current) {
         const elapsedSec = now - session.startTimeSec;
-        const ringProgress = clamp(elapsedSec / HOUR_DIAL_SEC, 0, 1);
-        ringRef.current.setAttribute('stroke-dashoffset', String(CLOCK_RING_CIRCUMFERENCE * (1 - ringProgress)));
+        const remainingSec = Math.max(0, session.durationSec - elapsedSec);
+        const sweepDeg = clamp(remainingSec / HOUR_DIAL_SEC, 0, 1) * 360;
+        wedgeRef.current.setAttribute('d', buildWedgePathD(sweepDeg));
       }
 
       drawWaveform();
@@ -753,7 +763,7 @@ export function MetronomeVisual({
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isPlaying, bandInfo.color, onSwingUpdate]);
+  }, [isPlaying, bandInfo.color]);
 
   // When the pendulum isn't moving, the eye watches the cursor instead —
   // an idle instrument that's still paying attention. Tracks the pointer
@@ -930,17 +940,7 @@ export function MetronomeVisual({
               />
             ))}
           </g>
-          <g className="eye-clock-ring-group" aria-hidden="true">
-            <circle
-              ref={ringRef}
-              cx={EYE.x}
-              cy={EYE.y}
-              r={CLOCK_RING_RADIUS}
-              className="eye-clock-ring"
-              strokeDasharray={CLOCK_RING_CIRCUMFERENCE}
-              strokeDashoffset={CLOCK_RING_CIRCUMFERENCE}
-            />
-          </g>
+          <path ref={wedgeRef} className="eye-clock-wedge" d={buildWedgePathD(0)} aria-hidden="true" />
           <circle ref={pupilRef} cx={EYE.x} cy={EYE.y} r={9} className="eye-pupil" />
           {hasSession && (
             <text x={EYE.x} y={EYE.y + 13} textAnchor="middle" dominantBaseline="central" className="eye-clock-text">
