@@ -11,6 +11,7 @@ import {
   classifyBeatFrequency,
 } from '../../data/bands';
 import { NOISE_SHIELDS, NOISE_SHIELD_ORDER } from '../../data/noiseShields';
+import { VIBE_GREETINGS } from '../../data/greetings';
 import type { CustomPreset } from '../../data/customPresets';
 import type { ApplyablePresetFields } from '../../hooks/useMetronomeEngine';
 import type { NoiseType, TickEarMode, TickSound } from '../../audio/binauralEngine';
@@ -216,11 +217,18 @@ export function ControlPanel({
   // capability check, not app state — desktop browsers simply don't have
   // this, so the whole control-group is omitted rather than shown disabled.
   const hapticsSupported = typeof navigator !== 'undefined' && 'vibrate' in navigator;
+  // Picked once on mount (lazy initializer, same "compute once" idiom as
+  // the engine hook's resolveInitialSettings) — random-once, not cycling,
+  // so a reload gives real variety without a decorative timer running
+  // just to rotate a header.
+  const [greeting] = useState(() => VIBE_GREETINGS[Math.floor(Math.random() * VIBE_GREETINGS.length)]);
 
   return (
     <div className="control-panel">
       <div className="control-group">
-        <span className="control-label">Presets</span>
+        <span className="control-label vibe-greeting" aria-label="Presets">
+          {greeting}
+        </span>
         <div className="preset-row">
           {PRESETS.map((preset) => (
             <button

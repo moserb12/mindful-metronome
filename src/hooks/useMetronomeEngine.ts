@@ -697,6 +697,7 @@ export function useMetronomeEngine() {
     lastTickSide,
     tickCount,
     swingRef,
+    sessionRef,
     getAnalyser: () => engineRef.current?.analyser ?? null,
     getAudioTimeSec: () => engineRef.current?.context.currentTime ?? 0,
     toggle,

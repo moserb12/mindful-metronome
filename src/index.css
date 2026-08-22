@@ -229,7 +229,7 @@ select:hover {
   stroke: rgba(255, 255, 255, 0.16);
   stroke-width: 1.5;
   stroke-linejoin: round;
-  animation: pyramid-breathe 7s var(--ease-soft) infinite;
+  animation: pyramid-breathe var(--mood-breathe-dur, 7s) var(--ease-soft) infinite;
   cursor: pointer;
   /* fill: none means nothing is "painted" in the triangle's interior, so
      the default pointer-events (visiblePainted) would only let taps land
@@ -269,6 +269,7 @@ select:hover {
 }
 
 .metronome-arm-line {
+  fill: none;
   stroke: var(--band-color, #a78bfa);
   stroke-width: 2.5;
   stroke-linecap: round;
@@ -322,7 +323,7 @@ select:hover {
   stroke-width: 1;
   transform-box: fill-box;
   transform-origin: center;
-  animation: eye-breathe 5.5s var(--ease-soft) infinite;
+  animation: eye-breathe var(--mood-breathe-dur, 5.5s) var(--ease-soft) infinite;
   cursor: pointer;
 }
 /* A quick squash-and-return "wink" on tap — touches only the outer ring's
@@ -353,7 +354,7 @@ select:hover {
   transition: stroke var(--dur-slow) var(--ease-soft);
   transform-box: fill-box;
   transform-origin: center;
-  animation: eye-breathe 5.5s var(--ease-soft) infinite;
+  animation: eye-breathe var(--mood-breathe-dur, 5.5s) var(--ease-soft) infinite;
   animation-delay: -1.8s; /* slightly out of phase with the outer ring — less mechanical, more organic */
 }
 .eye-pupil {
@@ -373,8 +374,44 @@ select:hover {
     transform: scale(1);
   }
   50% {
-    transform: scale(1.035);
+    transform: scale(var(--mood-breathe-scale, 1.035));
   }
+}
+
+/* ---------- Eye clock face (active while a timed session is running) ---------- */
+
+.eye-clock-ticks,
+.eye-clock-hand,
+.eye-clock-text {
+  opacity: 0;
+  transition: opacity var(--dur-slow) var(--ease-soft);
+  pointer-events: none;
+}
+.metronome-eye.has-session .eye-clock-ticks,
+.metronome-eye.has-session .eye-clock-hand,
+.metronome-eye.has-session .eye-clock-text {
+  opacity: 1;
+}
+.eye-clock-tick {
+  stroke: rgba(255, 255, 255, 0.28);
+  stroke-width: 1;
+  stroke-linecap: round;
+}
+.eye-clock-tick-major {
+  stroke: rgba(255, 255, 255, 0.5);
+  stroke-width: 1.5;
+}
+.eye-clock-hand {
+  stroke: var(--band-color, #a78bfa);
+  stroke-width: 2;
+  stroke-linecap: round;
+  filter: drop-shadow(0 0 4px var(--band-glow, rgba(167, 139, 250, 0.6)));
+}
+.eye-clock-text {
+  fill: var(--text);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
 }
 
 .neuron-node {
@@ -607,6 +644,16 @@ select:hover {
 .control-value {
   font-variant-numeric: tabular-nums;
   color: var(--text-muted);
+}
+/* The "what's the vibe?" greeting replacing the plain "Presets" label —
+   sized up and de-capitalized so it reads as a friendly question, not a
+   form field label like the other .control-label uses. */
+.vibe-greeting {
+  font-size: 0.92rem;
+  letter-spacing: normal;
+  text-transform: none;
+  color: var(--text);
+  font-weight: 500;
 }
 .control-hint {
   margin: 0;
@@ -871,90 +918,121 @@ select:hover {
   background: color-mix(in srgb, var(--chip-color, #a78bfa) 10%, transparent);
 }
 
-/* ---------- Practice (secondary) section ---------- */
-
-.practice-section {
-  width: 100%;
-  border-top: 1px solid var(--surface-border);
-  padding-top: 20px;
-}
-.practice-toggle {
-  width: 100%;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  background: none;
-  border: none;
-  color: var(--text-muted);
-  font-size: 0.9rem;
-  padding: 6px 2px;
-  cursor: pointer;
-  transition: color var(--dur-base) var(--ease-soft);
-}
-.practice-toggle:hover {
-  color: var(--text);
-}
-.practice-toggle-chevron {
-  font-size: 1.2rem;
-  color: var(--text-faint);
-  display: inline-block;
-  transition: transform var(--dur-base) var(--ease-harmonic);
-}
-.practice-toggle:hover .practice-toggle-chevron {
-  transform: scale(1.15);
-}
-.practice-body {
-  padding: 12px 2px 4px;
-  color: var(--text-muted);
-  font-size: 0.88rem;
-  line-height: 1.6;
-  animation: panel-rise var(--dur-base) var(--ease-soft) both;
-}
+/* ---------- Session timer (duration chips, below Play/Pause) ---------- */
 
 .session-timer {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  margin-top: 10px;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
 }
 .duration-row {
   display: flex;
   flex-wrap: wrap;
+  justify-content: center;
   gap: 8px;
 }
 .duration-chip {
-  min-width: 78px;
+  min-width: 72px;
   align-items: center;
   text-align: center;
 }
-.session-countdown {
+.session-status {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--text-faint);
+  text-align: center;
+  transition: color var(--dur-slow) var(--ease-soft);
+}
+.session-status-active {
+  color: var(--text-muted);
+}
+.session-status-fading {
+  color: color-mix(in srgb, var(--band-color, #a78bfa) 70%, var(--text-muted));
+}
+.session-status-ended {
+  color: var(--band-color, #a78bfa);
+}
+
+/* ---------- Bilateral stimulation "coming soon" banner ---------- */
+
+.coming-soon-banner {
+  width: 100%;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
-  padding: 14px;
-  border-radius: 14px;
-  border: 1px solid var(--surface-border);
-  background: rgba(255, 255, 255, 0.02);
-  transition: border-color var(--dur-slow) var(--ease-soft), background var(--dur-slow) var(--ease-soft);
+  gap: 6px;
+  border-top: 1px solid var(--surface-border);
+  padding-top: 20px;
 }
-.session-countdown-time {
-  font-variant-numeric: tabular-nums;
-  font-size: 1.6rem;
-  font-weight: 600;
-  color: var(--text);
+.coming-soon-ufo-track {
+  width: 60px;
+  height: 40px;
 }
-.session-countdown-label {
-  font-size: 0.78rem;
+.coming-soon-ufo {
+  animation: ufo-drift 9s var(--ease-soft) infinite;
+  transform-origin: center;
+}
+.ufo-saucer {
+  fill: rgba(255, 255, 255, 0.08);
+  stroke: var(--text-faint);
+  stroke-width: 1;
+}
+.ufo-dome {
+  fill: color-mix(in srgb, var(--band-color, #a78bfa) 30%, transparent);
+  stroke: var(--band-color, #a78bfa);
+  stroke-width: 1;
+}
+.ufo-pilot-pyramid {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.5);
+  stroke-width: 3;
+  stroke-linejoin: round;
+}
+.ufo-pilot-eye-outer {
+  fill: rgba(255, 255, 255, 0.08);
+  stroke: rgba(255, 255, 255, 0.4);
+  stroke-width: 1.5;
+}
+.ufo-pilot-eye-pupil {
+  fill: var(--band-color, #a78bfa);
+}
+.ufo-light {
+  fill: var(--band-color, #a78bfa);
+  animation: ufo-light-blink 1.4s ease-in-out infinite;
+}
+.coming-soon-text {
+  margin: 0;
+  font-size: 0.82rem;
   color: var(--text-faint);
+  text-align: center;
 }
-.session-countdown-fading {
-  border-color: color-mix(in srgb, var(--band-color, #a78bfa) 45%, var(--surface-border));
-  background: color-mix(in srgb, var(--band-color, #a78bfa) 6%, transparent);
+@keyframes ufo-drift {
+  0% {
+    transform: translate(0, 0) rotate(0deg);
+  }
+  25% {
+    transform: translate(10px, -6px) rotate(3deg);
+  }
+  50% {
+    transform: translate(0, -10px) rotate(0deg);
+  }
+  75% {
+    transform: translate(-10px, -4px) rotate(-3deg);
+  }
+  100% {
+    transform: translate(0, 0) rotate(0deg);
+  }
 }
-.session-countdown-ended {
-  border-color: color-mix(in srgb, var(--band-color, #a78bfa) 60%, var(--surface-border));
-  background: color-mix(in srgb, var(--band-color, #a78bfa) 10%, transparent);
+@keyframes ufo-light-blink {
+  0%,
+  100% {
+    opacity: 0.25;
+  }
+  50% {
+    opacity: 1;
+  }
 }
 
 /* A single-shot glow bloom when a TIMED session completes naturally —
@@ -1047,13 +1125,19 @@ select:hover {
   .play-toggle.playing,
   .visualizer-panel,
   .control-panel,
-  .practice-body,
   .hero-header,
   .metronome-visual,
-  .stage-readout {
+  .stage-readout,
+  .coming-soon-ufo,
+  .ufo-light {
     animation: none;
   }
   .eye-pupil.tracking {
+    transition: none;
+  }
+  .eye-clock-ticks,
+  .eye-clock-hand,
+  .eye-clock-text {
     transition: none;
   }
   /* A plain opacity fade instead of the drop-shadow bloom — no

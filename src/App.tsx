@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import { useMetronomeEngine } from './hooks/useMetronomeEngine';
 import { useCustomPresets } from './hooks/useCustomPresets';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
@@ -6,12 +5,12 @@ import { MetronomeVisual } from './components/Metronome/MetronomeVisual';
 import { AcousticVisualizer } from './components/Metronome/AcousticVisualizer';
 import { ControlPanel } from './components/Metronome/ControlPanel';
 import { SessionTimer } from './components/Metronome/SessionTimer';
+import { BilateralComingSoonBanner } from './components/BilateralComingSoonBanner';
 import { BANDS } from './data/bands';
 
 export default function App() {
   const engine = useMetronomeEngine();
   const customPresetsHook = useCustomPresets();
-  const [practiceOpen, setPracticeOpen] = useState(false);
   const bandInfo = BANDS[engine.band];
 
   function handleSaveCustomPreset(name: string) {
@@ -62,6 +61,9 @@ export default function App() {
           onSwingUpdate={engine.updateDroneBalance}
           bpm={engine.bpm}
           onSetBpm={engine.setBpm}
+          sessionRef={engine.sessionRef}
+          sessionPhase={engine.sessionPhase}
+          sessionRemainingSec={engine.sessionRemainingSec}
         />
 
         <div className="stage-readout">
@@ -72,6 +74,14 @@ export default function App() {
             {engine.isPlaying ? '❚❚ Pause' : '▶ Begin'}
           </button>
         </div>
+
+        <SessionTimer
+          sessionDurationMinutes={engine.sessionDurationMinutes}
+          sessionPhase={engine.sessionPhase}
+          isPlaying={engine.isPlaying}
+          onSetSessionDurationMinutes={engine.setSessionDurationMinutes}
+          chipColor={bandInfo.color}
+        />
 
         <AcousticVisualizer isPlaying={engine.isPlaying} getAnalyser={engine.getAnalyser} bandColor={bandInfo.color} />
 
@@ -106,28 +116,7 @@ export default function App() {
         />
       </main>
 
-      <section className="practice-section">
-        <button type="button" className="practice-toggle" onClick={() => setPracticeOpen((v) => !v)}>
-          <span>🧠 Practice with Bilateral Stimulation</span>
-          <span className="practice-toggle-chevron">{practiceOpen ? '−' : '+'}</span>
-        </button>
-        {practiceOpen && (
-          <div className="practice-body">
-            <p>
-              Set a session length and the drone will fade gracefully with a soft closing tone when your time is up
-              — instead of an abrupt stop, or having to remember to come back and pause it yourself.
-            </p>
-            <SessionTimer
-              sessionDurationMinutes={engine.sessionDurationMinutes}
-              sessionPhase={engine.sessionPhase}
-              sessionRemainingSec={engine.sessionRemainingSec}
-              isPlaying={engine.isPlaying}
-              onSetSessionDurationMinutes={engine.setSessionDurationMinutes}
-              chipColor={bandInfo.color}
-            />
-          </div>
-        )}
-      </section>
+      <BilateralComingSoonBanner />
 
       <footer className="app-footer">
         <p>Headphones recommended for the binaural layer. Mindful Metronome is free — use it as much as you like.</p>

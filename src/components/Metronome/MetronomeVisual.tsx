@@ -1,10 +1,39 @@
 import { useEffect, useRef, useState } from 'react';
 import { BANDS, MAX_BPM, MIN_BPM, type BrainwaveBand } from '../../data/bands';
-import { computeSwingSegment, type SwingState } from '../../hooks/useMetronomeEngine';
+import { MOOD_BY_BAND } from '../../data/moods';
+import { buildSmoothPath, clamp, pendulumEase, waveOffset } from '../../engine/motion';
+import { formatCountdown } from '../../format';
+import {
+  computeSessionPhase,
+  computeSwingSegment,
+  type SessionState,
+  type SessionPlaybackPhase,
+  type SwingState,
+} from '../../hooks/useMetronomeEngine';
 
 /** BPM change per pixel dragged — tuned so the full rod's on-screen length
  * covers roughly the full BPM range in one drag. */
 const DRAG_SENSITIVITY = 0.55;
+
+/** How long, in real seconds, the swing takes to ease in from motionless
+ * to full amplitude after Play is pressed — see the ramp-in comment in
+ * the main rAF effect below. */
+const RAMP_IN_SEC = 1.75;
+/** How long, in real ms, the arm takes to settle back to vertical after
+ * Pause/Stop — a JS/rAF decay, not a CSS transition (see the settle-tail
+ * comment below for why). */
+const SETTLE_MS = 700;
+/** Base snake-wave amplitude in SVG units, before the band's mood
+ * multiplier and the ramp-in/settle factor are applied. */
+const BASE_WAVE_AMPLITUDE = 2.5;
+/** How far the eye's clock hand reaches from center while a timed session
+ * is active — deliberately BETWEEN the iris (r=22) and the tick-mark ring
+ * (r=23-37, see CLOCK_TICKS below), so the hand visibly points INTO the
+ * tick band rather than staying trapped inside the iris. Distinct from
+ * PUPIL_MAX_OFFSET (10), which governs the much subtler swing/mouse-
+ * tracking glance — the clock hand is a different, more deliberate motion
+ * and reads better with real reach. */
+const CLOCK_HAND_RADIUS = 30;
 
 // ============================================================================
 // MetronomeVisual — the "quantum metronome": an eye at the center of a
@@ -21,6 +50,16 @@ const DRAG_SENSITIVITY = 0.55;
 // audio regardless of frame jank, exactly like Brain Bridging Beats' own
 // beat-driven visuals. The loop only runs while playing, so an idle tab
 // costs nothing.
+//
+// "Focus companion" pass: the pyramid/eye now carry a per-band MOOD
+// (src/data/moods.ts — sleepy/chill/peaceful/happy/energized), the swing
+// uses a more physically-weighted easing curve, the rod resonates with a
+// traveling snake-wave tied to BPM, motion eases in on Play and settles
+// out on Pause/Stop, and — while a timed session is running — the eye
+// itself becomes a ticking clock face showing the remaining time. NONE of
+// this changes WHEN a beat lands or what BinauralEngine hears: the ramp/
+// mood/wave math only reshapes the RENDERED swing, never `panValue` (fed
+// to onSwingUpdate at full amplitude, every frame, exactly as before).
 // ============================================================================
 
 const VIEW = 400;
@@ -55,9 +94,30 @@ const LEFT_ANGLE = angleToward(PIVOT, BASE_LEFT);
 const RIGHT_ANGLE = angleToward(PIVOT, BASE_RIGHT);
 const ARM_LENGTH = Math.hypot(BASE_LEFT.x - PIVOT.x, BASE_LEFT.y - PIVOT.y);
 
-function easeInOutSine(t: number): number {
-  return -(Math.cos(Math.PI * t) - 1) / 2;
+/** A point at `radius` from EYE's center, `angleDeg` clockwise from 12
+ * o'clock — the classic clock-face convention (0°=up, 90°=right), NOT the
+ * `rotate()`-matrix convention `angleToward()` uses above. Deliberately
+ * different, unrelated math for a deliberately different purpose (a
+ * clock hand, not the pendulum's own rotation) — don't "reconcile" the
+ * two sign conventions, they're solving different problems. */
+function clockPoint(angleDeg: number, radius: number): { x: number; y: number } {
+  const rad = (angleDeg * Math.PI) / 180;
+  return { x: EYE.x + radius * Math.sin(rad), y: EYE.y - radius * Math.cos(rad) };
 }
+
+/** 12 static clock-face tick marks, precomputed once at module load (same
+ * pattern as LEFT_ANGLE/RIGHT_ANGLE) — a ring between the iris (r=22) and
+ * the outer eye (r=38). Every 3rd mark (12/3/6/9) is longer/closer-in for
+ * a classic clock read. Always present in the DOM; visibility is a CSS
+ * opacity transition on the parent `.has-session` class, not a JSX
+ * mount/unmount, so it fades rather than pops. */
+const CLOCK_TICKS = Array.from({ length: 12 }, (_, i) => {
+  const angleDeg = i * 30;
+  const major = i % 3 === 0;
+  const inner = clockPoint(angleDeg, major ? 23 : 25);
+  const outer = clockPoint(angleDeg, major ? 37 : 35);
+  return { x1: inner.x, y1: inner.y, x2: outer.x, y2: outer.y, major };
+});
 
 interface NeuronClusterProps {
   side: 'left' | 'right';
@@ -113,8 +173,9 @@ function NeuronCluster({ side, color, pulseToken }: NeuronClusterProps) {
 }
 
 /** How far the pupil can drift from the iris's center while tracking the
- * pendulum, in SVG units. Iris radius is 22, pupil radius 9 — this keeps
- * the pupil comfortably inside the iris at full deflection. */
+ * pendulum or the cursor, in SVG units. Iris radius is 22, pupil radius 9
+ * — this keeps the pupil comfortably inside the iris at full deflection.
+ * NOT used for the session-clock hand mode — see CLOCK_HAND_RADIUS. */
 const PUPIL_MAX_OFFSET = 10;
 
 /** Where along the rod the weight can slide, in SVG units from the pivot.
@@ -135,6 +196,12 @@ interface TempoWeightProps {
  * for slower — a shorter effective pendulum swings faster. Rendered as a
  * child of the arm's rotating <g>, so it swings with the pendulum for free
  * (SVG nested transforms compose) without any extra per-frame code.
+ *
+ * Deliberately positioned on the rod's STRAIGHT center axis, ignoring the
+ * snake-wave offset applied to the rod's own rendering (see the rAF loop
+ * below) — the weight is a rigid physical slider, not part of the thin
+ * rod's own resonance, so it stays put regardless of how wavy the string
+ * looks around it.
  *
  * Drag math deliberately ignores the rod's current rotation: it just reads
  * vertical pointer movement (up = faster, down = slower) rather than
@@ -186,10 +253,25 @@ interface MetronomeVisualProps {
   tickCount: number;
   /** Called every animation frame with the pendulum's current position
    * (-1 full left .. 1 full right), so the drone's L/R balance can track
-   * it continuously — see BinauralEngine.updateDroneBalance(). */
+   * it continuously — see BinauralEngine.updateDroneBalance(). ALWAYS
+   * full amplitude, even during the visual ramp-in/settle-out — see the
+   * rAF loop below. */
   onSwingUpdate: (panValue: number) => void;
   bpm: number;
   onSetBpm: (bpm: number) => void;
+  /** Raw session reference (or null when no timed session is armed) — read
+   * DIRECTLY inside the rAF loop every frame via computeSessionPhase(),
+   * exactly like `swingRef`, rather than relying on the 250ms-polled
+   * `sessionPhase`/`sessionRemainingSec` React state. This sidesteps a
+   * real staleness risk: `sessionRef.current` can flip from null to a
+   * real session (or back) WHILE isPlaying stays true (e.g. picking a
+   * duration mid-play), which would NOT re-run this effect since
+   * `isPlaying` didn't change — a value captured only in the effect's own
+   * closure would go stale in that case, but a ref's `.current` is always
+   * fresh no matter when it's read. */
+  sessionRef: React.RefObject<SessionState | null>;
+  sessionPhase: SessionPlaybackPhase;
+  sessionRemainingSec: number | null;
 }
 
 export function MetronomeVisual({
@@ -203,23 +285,38 @@ export function MetronomeVisual({
   onSwingUpdate,
   bpm,
   onSetBpm,
+  sessionRef,
+  sessionPhase,
+  sessionRemainingSec,
 }: MetronomeVisualProps) {
   const armRef = useRef<SVGGElement | null>(null);
+  const armPathRef = useRef<SVGPathElement | null>(null);
   const pupilRef = useRef<SVGCircleElement | null>(null);
+  const clockHandLineRef = useRef<SVGLineElement | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const smoothedRef = useRef<number[] | null>(null);
   const rafRef = useRef<number | null>(null);
+  /** The last RENDERED total angle (post-ramp, post-wiggle) — seeds the
+   * settle-tail's decay-to-zero starting point when Pause/Stop is
+   * pressed, so it always continues smoothly from wherever the arm
+   * actually was, never a jump. */
+  const lastAngleRef = useRef(0);
+  /** The last rendered wave amplitude — seeds the settle-tail's wave
+   * decay the same way. */
+  const lastWaveAmplitudeRef = useRef(0);
 
   const bandInfo = BANDS[band];
+  const mood = MOOD_BY_BAND[band];
 
   // Two small, purely decorative one-shot flourishes — tapping the pyramid
   // outline or the eye's outer ring plays a brief animation via a toggled
   // CSS class, timed out automatically. Neither touches the rAF loop above
   // or the pupil-driving effects below: different elements/properties
   // entirely (the pyramid's own filter, the eye-outer ring's own
-  // transform — never cx/cy, which only the swing/mouse-tracking effects
-  // are allowed to touch), so there's nothing for them to conflict with.
+  // transform — never cx/cy, which only the swing/mouse-tracking/session-
+  // clock effects are allowed to touch), so there's nothing for them to
+  // conflict with.
   const [pyramidPinging, setPyramidPinging] = useState(false);
   const pyramidPingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [eyeWinking, setEyeWinking] = useState(false);
@@ -244,23 +341,127 @@ export function MetronomeVisual({
     };
   }, []);
 
+  /** Builds the rod's wavy `d` attribute from sampled points along its
+   * LOCAL (unrotated) length — amplitude 0 collapses this to exactly
+   * today's straight line, so idle/resting and the settle-tail's final
+   * frame both reuse this one function with no special-cased "flat"
+   * branch. */
+  function buildArmPathD(amplitude: number, phase: number): string {
+    const SAMPLES = 16;
+    const points: { x: number; y: number }[] = [];
+    for (let i = 0; i <= SAMPLES; i++) {
+      const s = (i / SAMPLES) * ARM_LENGTH;
+      const offset = waveOffset(s, ARM_LENGTH, phase, amplitude);
+      points.push({ x: PIVOT.x + offset, y: PIVOT.y + s });
+    }
+    return buildSmoothPath(points);
+  }
+
+  /** Derives the pendulum-tip position from a rendered rotation angle,
+   * using the SAME sign convention the arm itself is rotated with (see
+   * angleToward()'s doc comment) — shared by the main swing-tracking
+   * branch and the settle-tail, so both apply the pupil offset from the
+   * exact same tip math. */
+  function setPupilFromAngle(totalAngleDeg: number) {
+    if (!pupilRef.current) return;
+    const angleRad = (totalAngleDeg * Math.PI) / 180;
+    const tipX = PIVOT.x - ARM_LENGTH * Math.sin(angleRad);
+    const tipY = PIVOT.y + ARM_LENGTH * Math.cos(angleRad);
+    const dx = tipX - EYE.x;
+    const dy = tipY - EYE.y;
+    const dist = Math.hypot(dx, dy) || 1;
+    const offsetX = (dx / dist) * PUPIL_MAX_OFFSET;
+    const offsetY = (dy / dist) * PUPIL_MAX_OFFSET;
+    pupilRef.current.setAttribute('cx', String(EYE.x + offsetX));
+    pupilRef.current.setAttribute('cy', String(EYE.y + offsetY));
+  }
+
+  function snapToRest() {
+    if (armRef.current) armRef.current.setAttribute('transform', `rotate(0 ${PIVOT.x} ${PIVOT.y})`);
+    if (armPathRef.current) armPathRef.current.setAttribute('d', buildArmPathD(0, 0));
+    if (pupilRef.current) {
+      pupilRef.current.setAttribute('cx', String(EYE.x));
+      pupilRef.current.setAttribute('cy', String(EYE.y));
+    }
+    lastAngleRef.current = 0;
+    lastWaveAmplitudeRef.current = 0;
+  }
+
   useEffect(() => {
     if (!isPlaying) {
-      // Resting pose: arm hangs straight down, eye looks front, no
-      // animation loop running.
-      if (armRef.current) armRef.current.setAttribute('transform', `rotate(0 ${PIVOT.x} ${PIVOT.y})`);
-      if (pupilRef.current) {
-        pupilRef.current.setAttribute('cx', String(EYE.x));
-        pupilRef.current.setAttribute('cy', String(EYE.y));
-      }
+      // Settle-out: ease the arm back to vertical over SETTLE_MS rather
+      // than snapping instantly, seeded from wherever it actually was
+      // (lastAngleRef). A JS/rAF decay, not a CSS transition — the arm's
+      // rotation is deliberately set via the native SVG `transform`
+      // ATTRIBUTE, not the CSS `transform` property (see angleToward()'s
+      // doc comment on why), and CSS transitions can't animate an
+      // attribute set imperatively like this without reintroducing the
+      // exact cross-browser ambiguity that convention exists to avoid.
+      //
+      // This is purely a rendering-layer tail: onSwingUpdate(0) still
+      // fires at the identical moment it always has (synchronously, right
+      // here), so the manual-Pause/Stop-is-audio-instant invariant is
+      // completely untouched by this — only the arm/pupil/wave's
+      // RENDERED decay is new.
       onSwingUpdate(0);
-      return;
+
+      const startAngle = lastAngleRef.current;
+      const startAmplitude = lastWaveAmplitudeRef.current;
+      // A natural session end holds sessionPhase at 'ended' for a few
+      // seconds so the eye's clock face reads as "complete" rather than
+      // instantly reverting — captured once here (accurate for this
+      // short-lived purpose: it won't flip back to 'idle' until well
+      // after this settle tail finishes) so the pupil-decay step below
+      // can skip touching the frozen clock-hand position during that
+      // window. The arm/wave still settle regardless — different
+      // elements, orthogonal to what the eye is showing.
+      const skipPupilDecay = sessionPhase === 'ended';
+
+      if (Math.abs(startAngle) < 0.01 && startAmplitude < 0.01) {
+        snapToRest();
+        return;
+      }
+
+      const startTime = performance.now(); // wall clock — the AudioContext may already be torn down by stop()
+      function settleFrame() {
+        const t = clamp((performance.now() - startTime) / SETTLE_MS, 0, 1);
+        const eased = 1 - Math.pow(1 - t, 3);
+        const remaining = 1 - eased;
+        const angle = startAngle * remaining;
+        const amplitude = startAmplitude * remaining;
+
+        if (armRef.current) armRef.current.setAttribute('transform', `rotate(${angle} ${PIVOT.x} ${PIVOT.y})`);
+        if (armPathRef.current) armPathRef.current.setAttribute('d', buildArmPathD(amplitude, 0));
+        if (!skipPupilDecay) setPupilFromAngle(angle);
+        lastAngleRef.current = angle;
+        lastWaveAmplitudeRef.current = amplitude;
+
+        if (t < 1) {
+          rafRef.current = requestAnimationFrame(settleFrame);
+        } else {
+          snapToRest();
+        }
+      }
+
+      rafRef.current = requestAnimationFrame(settleFrame);
+      return () => {
+        if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      };
     }
+
+    // Ramp-in: captured ONCE per Play press (this effect only re-runs when
+    // isPlaying/bandInfo.color/onSwingUpdate change — a mid-play setBpm()
+    // does not re-run it, so dragging the tempo weight never re-triggers
+    // a ramp).
+    const rampStartSec = getAudioTimeSec();
 
     function frame() {
       const arm = armRef.current;
       const swing = swingRef.current;
       const now = getAudioTimeSec();
+
+      const rampT = clamp((now - rampStartSec) / RAMP_IN_SEC, 0, 1);
+      const rampIn = 1 - Math.pow(1 - rampT, 3);
 
       let angle = 0;
       let wiggle = 0;
@@ -274,11 +475,24 @@ export function MetronomeVisual({
         // SCHEDULED. That approach left the arm frozen at each extreme for
         // most of a beat, then jumping to ~90% through its eased curve the
         // instant the next segment arrived — a visible freeze-then-snap
-        // instead of a smooth swing.
+        // instead of a smooth swing. Deriving the segment from elapsed
+        // time relative to a fixed reference removes the dependency on
+        // scheduler notification timing entirely.
         const segment = computeSwingSegment(now, swing);
         const span = segment.toTimeSec - segment.fromTimeSec;
         const t = span > 0 ? Math.min(1, Math.max(0, (now - segment.fromTimeSec) / span)) : 1;
-        const eased = easeInOutSine(t);
+
+        // A more physically-weighted curve than plain sine, blended by the
+        // band's mood AND the live tempo — see pendulumEase()'s doc
+        // comment in engine/motion.ts. `eased` (the SHAPE) is shared by
+        // BOTH the angle and panValue below, so the audio pan and the
+        // rendered swing always agree on TIMING; only angle's FINAL
+        // rendered value additionally gets `* rampIn` further down —
+        // panValue never does.
+        const tempoT = (bpm - MIN_BPM) / (MAX_BPM - MIN_BPM);
+        const hangWeight = clamp(mood.easeHangTime - 0.35 * tempoT, 0.05, 0.95);
+        const eased = pendulumEase(t, hangWeight);
+
         const fromDeg = segment.fromSide === 'left' ? LEFT_ANGLE : RIGHT_ANGLE;
         const toDeg = segment.toSide === 'left' ? LEFT_ANGLE : RIGHT_ANGLE;
         angle = fromDeg + (toDeg - fromDeg) * eased;
@@ -290,9 +504,10 @@ export function MetronomeVisual({
         // A short, decaying vibration layered on top the instant the tip
         // arrives at a side (when the tick actually sounds) — the
         // "wiggle" the tone triggers, distinct from the smooth swing.
+        // Scaled by the band's mood (energized bands wiggle harder).
         const sinceArrival = now - segment.toTimeSec;
         if (sinceArrival >= 0 && sinceArrival < 0.35) {
-          wiggle = Math.exp(-sinceArrival * 14) * Math.sin(sinceArrival * 60) * 4;
+          wiggle = Math.exp(-sinceArrival * 14) * Math.sin(sinceArrival * 60) * 4 * mood.wiggleMul;
         }
       }
 
@@ -303,33 +518,44 @@ export function MetronomeVisual({
       // attribute form (`rotate(deg, cx, cy)`) has been unambiguous since
       // SVG 1.1: it always operates in the element's own user-unit
       // coordinate system, so there's nothing left to disagree about.
-      const totalAngle = angle + wiggle;
+      const totalAngle = (angle + wiggle) * rampIn;
+      lastAngleRef.current = totalAngle;
       if (arm) arm.setAttribute('transform', `rotate(${totalAngle} ${PIVOT.x} ${PIVOT.y})`);
-      onSwingUpdate(panValue);
+      onSwingUpdate(panValue); // full amplitude, always — never scaled by rampIn
 
-      // The eye watches the pendulum: look toward wherever the tip
-      // currently is, using the SAME angle (including the wiggle) that
-      // just moved the arm, so the eye reacts to the tick too. Setting
-      // cx/cy directly (rather than a CSS translate) sidesteps the same
-      // transform-box ambiguity noted above — cx/cy are always plain SVG
-      // user units, so this can never come out mirrored or scaled wrong.
-      //
-      // tipX uses MINUS sin(angleRad) — this must match the real SVG
-      // rotation matrix the arm itself is rendered with (x' = dx·cos(a) −
-      // dy·sin(a), see angleToward()'s doc comment above), not the more
-      // "obvious" plus sign. Getting this backwards is exactly what made
-      // the eye look mirrored from the arm for two rounds of review.
-      if (pupilRef.current) {
-        const angleRad = (totalAngle * Math.PI) / 180;
-        const tipX = PIVOT.x - ARM_LENGTH * Math.sin(angleRad);
-        const tipY = PIVOT.y + ARM_LENGTH * Math.cos(angleRad);
-        const dx = tipX - EYE.x;
-        const dy = tipY - EYE.y;
-        const dist = Math.hypot(dx, dy) || 1;
-        const offsetX = (dx / dist) * PUPIL_MAX_OFFSET;
-        const offsetY = (dy / dist) * PUPIL_MAX_OFFSET;
-        pupilRef.current.setAttribute('cx', String(EYE.x + offsetX));
-        pupilRef.current.setAttribute('cy', String(EYE.y + offsetY));
+      // Snake-wave resonance along the rod, tied to bpm and the band's
+      // mood — phase derived from the absolute audio clock (not
+      // accumulated per-frame), matching this file's anti-drift
+      // philosophy everywhere else, so the ripple's speed stays locked to
+      // real tempo regardless of frame jank.
+      const wavePhase = now * 2 * Math.PI * (bpm / 60) * 1.5 * mood.waveSpeedMul;
+      const waveAmplitude = BASE_WAVE_AMPLITUDE * mood.waveAmplitudeMul * rampIn;
+      lastWaveAmplitudeRef.current = waveAmplitude;
+      if (armPathRef.current) armPathRef.current.setAttribute('d', buildArmPathD(waveAmplitude, wavePhase));
+
+      // Eye contents: a timed session (if armed) takes precedence over the
+      // normal swing-tracking pupil. Read `sessionRef.current` directly
+      // (fresh every frame, see the prop's doc comment above) rather than
+      // the polled `sessionPhase` prop, and derive the exact fraction via
+      // computeSessionPhase() — the same pure function the hook itself
+      // uses, so the hand's sweep is perfectly smooth between polls
+      // without needing a second timing mechanism.
+      const session = sessionRef.current;
+      if (session) {
+        const phaseNow = computeSessionPhase(now, session);
+        const progress = clamp(1 - phaseNow.remainingSec / session.durationSec, 0, 1);
+        const handPoint = clockPoint(progress * 360, CLOCK_HAND_RADIUS);
+        pupilRef.current?.setAttribute('cx', String(handPoint.x));
+        pupilRef.current?.setAttribute('cy', String(handPoint.y));
+        clockHandLineRef.current?.setAttribute('x2', String(handPoint.x));
+        clockHandLineRef.current?.setAttribute('y2', String(handPoint.y));
+      } else {
+        // The eye watches the pendulum: look toward wherever the tip
+        // currently is, using the SAME angle (including the wiggle) that
+        // just moved the arm, so the eye reacts to the tick too.
+        setPupilFromAngle(totalAngle);
+        clockHandLineRef.current?.setAttribute('x2', String(EYE.x));
+        clockHandLineRef.current?.setAttribute('y2', String(EYE.y));
       }
 
       drawWaveform();
@@ -402,12 +628,17 @@ export function MetronomeVisual({
   // anywhere on the page (not just while hovering the visual itself), so
   // it reads as alive rather than as a hover effect. Deliberately a
   // SEPARATE effect from the swing-driven one above rather than one
-  // combined effect: the two are mutually exclusive by construction (this
-  // one is a no-op while playing, the other resets the pupil to center the
-  // instant it isn't), so keeping them apart avoids one growing a pile of
-  // playing/!playing branches.
+  // combined effect: the three pupil modes (swing-tracking, mouse-
+  // tracking, session-clock) are mutually exclusive by construction, so
+  // keeping them apart avoids one growing a pile of branches.
+  //
+  // Guarded on `sessionPhase === 'ended'` too, not just `isPlaying`: a
+  // natural session end sets isPlaying false immediately but holds
+  // sessionPhase at 'ended' for a few seconds so the eye's completed
+  // clock face (numeral "0:00", hand at 12) has time to actually read as
+  // finished — mouse-tracking taking over instantly would erase that.
   useEffect(() => {
-    if (isPlaying) return;
+    if (isPlaying || sessionPhase === 'ended') return;
     const svg = svgRef.current;
     const pupil = pupilRef.current;
     if (!svg || !pupil) return;
@@ -440,10 +671,22 @@ export function MetronomeVisual({
       pupil.setAttribute('cx', String(EYE.x));
       pupil.setAttribute('cy', String(EYE.y));
     };
-  }, [isPlaying]);
+  }, [isPlaying, sessionPhase]);
+
+  const hasSession = sessionPhase !== 'idle';
 
   return (
-    <div className="metronome-visual" style={{ '--band-color': bandInfo.color, '--band-glow': bandInfo.glow } as React.CSSProperties}>
+    <div
+      className="metronome-visual"
+      style={
+        {
+          '--band-color': bandInfo.color,
+          '--band-glow': bandInfo.glow,
+          '--mood-breathe-dur': `${mood.breatheDurSec}s`,
+          '--mood-breathe-scale': mood.breatheScale,
+        } as React.CSSProperties
+      }
+    >
       <canvas ref={canvasRef} className="metronome-waveform" aria-hidden="true" />
       <svg
         ref={svgRef}
@@ -471,14 +714,14 @@ export function MetronomeVisual({
         <NeuronCluster side="right" color={bandInfo.color} pulseToken={lastTickSide === 'right' ? `R${tickCount}` : 'R-idle'} />
 
         <g ref={armRef} className="metronome-arm">
-          <line x1={PIVOT.x} y1={PIVOT.y} x2={PIVOT.x} y2={PIVOT.y + ARM_LENGTH} className="metronome-arm-line" />
+          <path ref={armPathRef} className="metronome-arm-line" d={`M ${PIVOT.x} ${PIVOT.y} L ${PIVOT.x} ${PIVOT.y + ARM_LENGTH}`} />
           <circle cx={PIVOT.x} cy={PIVOT.y + ARM_LENGTH} r={7} className="metronome-arm-tip" />
           <TempoWeight bpm={bpm} onSetBpm={onSetBpm} color={bandInfo.color} />
         </g>
 
         <circle cx={PIVOT.x} cy={PIVOT.y} r={5} className="metronome-pivot-dot" />
 
-        <g className="metronome-eye">
+        <g className={`metronome-eye ${hasSession ? 'has-session' : ''}`}>
           <circle
             cx={EYE.x}
             cy={EYE.y}
@@ -496,7 +739,25 @@ export function MetronomeVisual({
             }}
           />
           <circle cx={EYE.x} cy={EYE.y} r={22} className="eye-iris" />
+          <g className="eye-clock-ticks" aria-hidden="true">
+            {CLOCK_TICKS.map((tick, i) => (
+              <line
+                key={i}
+                x1={tick.x1}
+                y1={tick.y1}
+                x2={tick.x2}
+                y2={tick.y2}
+                className={`eye-clock-tick ${tick.major ? 'eye-clock-tick-major' : ''}`}
+              />
+            ))}
+          </g>
+          <line ref={clockHandLineRef} x1={EYE.x} y1={EYE.y} x2={EYE.x} y2={EYE.y} className="eye-clock-hand" aria-hidden="true" />
           <circle ref={pupilRef} cx={EYE.x} cy={EYE.y} r={9} className="eye-pupil" />
+          {hasSession && (
+            <text x={EYE.x} y={EYE.y} textAnchor="middle" dominantBaseline="central" className="eye-clock-text">
+              {formatCountdown(sessionRemainingSec ?? 0)}
+            </text>
+          )}
         </g>
       </svg>
       <p className="tempo-weight-hint">Drag the weight — {bpm} BPM</p>

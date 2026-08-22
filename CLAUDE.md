@@ -3,6 +3,105 @@
 This file is read automatically by Claude Code at the start of every session
 in this repo. Keep it up to date as decisions get made.
 
+## Status update — "Focus Companion" pass: mood, physics, session-clock eye
+
+Following the delight pass below, the builder asked for the pyramid-eye
+mascot to stop feeling like a fixed diagram and become a genuine "focus
+companion" — personality per brainwave band, more physical pendulum
+motion, a resonating rod, smooth ease in/out on play/pause, a friendly
+rotating greeting, the eye itself as the session clock, duration chips
+moved out of hiding, and the unbuilt bilateral-stimulation feature turned
+into an honest "coming soon" banner. All of it is rendering/CSS layered on
+top of the existing audio-visual-sync architecture — nothing here changes
+WHEN a beat lands or WHEN a session phase transitions, only how an
+already-correctly-timed moment is drawn.
+
+**Per-band mood** (`src/data/moods.ts`, `MOOD_BY_BAND`) — delta=sleepy,
+theta=chill, alpha=peaceful, beta=happy, gamma=energized. Each band sets a
+breathing rate/scale (fed to the existing `eye-breathe`/`pyramid-breathe`
+keyframes via new `--mood-breathe-dur`/`--mood-breathe-scale` CSS custom
+properties on `.metronome-visual`), a pendulum "hang weight," a snake-wave
+amplitude/speed multiplier, and a tick-arrival wiggle multiplier. **Alpha
+is deliberately pinned to the exact pre-existing literal values** (it's
+`DEFAULT_PRESET`), so the most common path renders pixel-identical to
+before this pass — zero regression risk on the default preset.
+
+**More physical pendulum + resonating rod** (`src/engine/motion.ts`, new,
+unit-tested in `motion.test.ts`) — `pendulumEase(t, hangWeight)` blends the
+old plain-sine curve with a cubic in/out snap, weighted by the band's mood
+AND the live BPM each frame (dragging the tempo weight snappier feels
+snappier regardless of band). `waveOffset()`/`buildSmoothPath()` drive a
+traveling snake-wave along the rod, tied to BPM — the rod's `<line>` became
+a `<path ref={armPathRef}>` sampled and rebuilt every rAF frame. The
+envelope is exactly 0 at both the pivot and the tip, so nothing else (the
+tip circle, the pupil-tracking math, the draggable tempo weight, which
+rides the rod's straight center axis on purpose) needs to change to
+accommodate it.
+
+**Ease in/out on Play/Pause, visual-only.** Ramp-in (Play): amplitude
+scales 0→1 over 1.75s (`RAMP_IN_SEC`), captured once per Play press so
+dragging the tempo weight mid-play never re-triggers it. Settle-out
+(Pause/Stop): a ~700ms JS/rAF cubic decay from wherever the arm actually
+was back to vertical — a JS tail, not a CSS transition, because the arm's
+rotation is deliberately set via the native SVG `transform` **attribute**,
+not the CSS property (cross-browser SVG-transform ambiguity, solved once
+already — see `angleToward()`'s doc comment). **The one rule that can never
+be relaxed: `onSwingUpdate(panValue)` fires at full amplitude every frame,
+completely unaffected by `rampIn`** — only the *rendered* angle and wave
+amplitude are scaled. This preserves the prior session's manual-Pause/
+Stop-is-audio-instant decision untouched; the ramp/settle are purely how
+the arm is drawn, never when audio panning moves or when a manual stop
+actually silences the drone.
+
+**"What's the vibe?" greeting** (`src/data/greetings.ts`,
+`VIBE_GREETINGS`) — 8 friendly phrases, one picked randomly per mount
+(`ControlPanel.tsx`), replacing the plain "Presets" label above the band
+picker (`aria-label="Presets"` keeps a stable label for assistive tech).
+
+**The eye is now the session clock.** While a timed session is running,
+the pupil leaves its normal swing/mouse-tracking job and becomes a
+sweeping clock hand (`CLOCK_HAND_RADIUS = 30`, reaching into a ring of 12
+tick marks between the iris and the outer eye), and the remaining time
+renders as real SVG text at the eye's center (`formatCountdown`, extracted
+to `src/format.ts` so `SessionTimer.tsx` and `MetronomeVisual.tsx` share
+one implementation) — not `aria-live`, on purpose, since a per-second live
+region would spam screen readers. Precedence is resolved by checking
+`sessionRef.current !== null` **fresh every rAF frame**, not the polled
+`sessionPhase` prop — a session can be armed/disarmed mid-play (picking a
+duration while already playing) without `isPlaying` changing, and only a
+ref (not a value closed over by the effect) is guaranteed fresh in that
+case. The separate mouse-tracking effect is guarded on
+`sessionPhase === 'ended'` too, not just `isPlaying`, so the completed
+clock face (0:00, hand at 12) has the full multi-second "ended" grace
+window to actually read as finished before mouse-tracking takes back over.
+`useMetronomeEngine.ts` had exactly one line changed to support this:
+`sessionRef` is now exposed from the hook's return object, same as
+`swingRef` already was.
+
+**Duration chips relocated + relabeled** (`SessionTimer.tsx`) — 15/30/45/
+60/Infinite (was 10/20/30/Open-ended, hidden inside a collapsible
+accordion). Now always visible, directly below the Play/Pause button,
+unconditionally rendered in `App.tsx` — no more `practiceOpen` accordion
+state. The old big numeric countdown that used to live here is gone
+entirely; the eye is now the sole numeric readout.
+
+**Bilateral stimulation → honest "coming soon" banner**
+(`src/components/BilateralComingSoonBanner.tsx`, new) — the old
+collapsible "🧠 Practice with Bilateral Stimulation" section (which just
+housed the session timer, now moved) is replaced with one small
+non-interactive line: a drifting SVG UFO, piloted by a miniature version
+of the pyramid-eye mascot, next to "Bilateral stimulation function coming
+soon." That 18-level hand/foot rhythm-timing program (the Brain Bridging
+Beats sibling app's actual feature) isn't built here yet — this says so
+honestly instead of a dead-end accordion.
+
+All new ambient motion (mood breathing already inherited the existing
+disable rules; UFO drift + light blink are new) respects
+`prefers-reduced-motion: reduce`, verified live. `motion.test.ts` adds 15
+pure-function tests (`pendulumEase`, `waveOffset`, `buildSmoothPath`) to
+the existing suite — 55 tests total, all passing; `npx tsc -b` and
+`npm run build` both clean.
+
 ## Status update — "delight" pass: persistence, timed sessions, PWA, and more
 
 The builder asked what it would take to make the app "feel really truly
