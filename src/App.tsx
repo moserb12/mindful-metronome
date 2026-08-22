@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { SpeedInsights } from '@vercel/speed-insights/react';
 import { useMetronomeEngine } from './hooks/useMetronomeEngine';
 import { useCustomPresets } from './hooks/useCustomPresets';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
@@ -132,6 +133,7 @@ export default function App() {
       <footer className="app-footer">
         <p>Headphones recommended for the binaural layer. Mindful Metronome is free — use it as much as you like.</p>
       </footer>
+      <SpeedInsights />
     </div>
   );
 }
