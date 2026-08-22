@@ -5,9 +5,24 @@ import { classifyBeatFrequency, DEFAULT_PRESET } from '../data/bands';
 import { loadSettings, saveSettings } from '../storage/settingsStorage';
 import { decodeSettingsFromSearchParams, encodeSettingsToSearchParams, hasAnyCoreTuningParams } from '../urlState';
 
-/** How far ahead the audio scheduler keeps its tick queue filled — see the
- * comment where this is used, in start(). Deliberately much larger than
- * timing.ts's 0.1s audio-only default. */
+/** How far ahead the audio scheduler commits real tick oscillators while
+ * the tab is VISIBLE. Small on purpose: every beat inside this window is
+ * already locked into the Web Audio graph (its tickSound/tickSubdivision
+ * baked in at scheduling time) and can't be changed retroactively, so
+ * this window is also the worst-case delay before a "Sound effect" or
+ * "Beat pattern" change is actually audible. Comfortably above
+ * SCHEDULER_TICK_MS (25ms) and the ~0.15s first-beat offset in start()
+ * below, with a little headroom for a slow frame. */
+const FOREGROUND_LOOKAHEAD_SEC = 0.2;
+/** How far ahead beats get scheduled once the tab is HIDDEN — swapped in
+ * automatically via the visibilitychange listener in start() below.
+ * Browsers throttle setInterval in hidden tabs (commonly clamped to a 1s
+ * minimum), and BeatScheduler only refills its queue when its own timer
+ * actually fires, so a hidden tab needs a much bigger buffer already
+ * committed to survive the gap between ticks without running dry. A
+ * background tab isn't where anyone's actively tweaking Sound
+ * effect/Beat pattern anyway, so the latency tradeoff only applies when
+ * it can't be felt. */
 const BACKGROUND_SAFE_LOOKAHEAD_SEC = 3;
 
 /** Debounce window for saving settings to localStorage — range inputs fire
@@ -235,6 +250,7 @@ export function useMetronomeEngine() {
 
   const engineRef = useRef<BinauralEngine | null>(null);
   const schedulerRef = useRef<BeatScheduler | null>(null);
+  const visibilityListenerRef = useRef<(() => void) | null>(null);
   const swingRef = useRef<SwingState | null>(null);
   const sessionRef = useRef<SessionState | null>(null);
   const sessionPollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -386,6 +402,10 @@ export function useMetronomeEngine() {
   function stopPlaybackInternal() {
     schedulerRef.current?.stop();
     schedulerRef.current = null;
+    if (visibilityListenerRef.current) {
+      document.removeEventListener('visibilitychange', visibilityListenerRef.current);
+      visibilityListenerRef.current = null;
+    }
     engineRef.current?.stop();
     if (endTickTimeoutRef.current) clearTimeout(endTickTimeoutRef.current);
     if (centerTickTimeoutRef.current) clearTimeout(centerTickTimeoutRef.current);
@@ -458,22 +478,30 @@ export function useMetronomeEngine() {
     // the audio ticks can never disagree about which side is "now".
     swingRef.current = { referenceTimeSec: firstBeatAtSec, referenceSide: 'left', secondsPerBeat: 60 / paramsRef.current.bpm };
 
-    // A generous lookahead (vs. timing.ts's 0.1s audio-only default) so
-    // playback survives the tab being backgrounded: browsers throttle
-    // setInterval in hidden tabs (commonly clamped to a 1s minimum), and
-    // BeatScheduler only refills its queue when this callback actually
-    // fires. Already-scheduled ticks keep sounding regardless (they're
-    // baked into the audio graph as exact AudioContext times), but the
-    // queue would otherwise run dry within ~100ms of the tab losing focus.
-    // A few seconds of lookahead comfortably outlasts typical throttling.
+    // Small while the tab is visible — see FOREGROUND_LOOKAHEAD_SEC's doc
+    // comment for why: every beat inside this window is already
+    // irrevocably committed to the audio graph, so it's also the
+    // worst-case delay before a Sound effect/Beat pattern change is
+    // actually heard. Swapped to the much larger BACKGROUND_SAFE_LOOKAHEAD_SEC
+    // automatically the instant the tab is hidden (browsers throttle
+    // setInterval there, commonly to a 1s minimum, and the scheduler only
+    // refills its queue when its own timer fires — the small foreground
+    // window would run dry within ~100ms of losing focus), and back down
+    // the instant it's visible again.
     const scheduler = new BeatScheduler(
       () => engine.context.currentTime,
       paramsRef.current.bpm,
       handleBeatScheduled,
-      BACKGROUND_SAFE_LOOKAHEAD_SEC
+      document.hidden ? BACKGROUND_SAFE_LOOKAHEAD_SEC : FOREGROUND_LOOKAHEAD_SEC
     );
     schedulerRef.current = scheduler;
     scheduler.start(firstBeatAtSec);
+
+    function handleVisibilityChange() {
+      scheduler.setLookaheadSec(document.hidden ? BACKGROUND_SAFE_LOOKAHEAD_SEC : FOREGROUND_LOOKAHEAD_SEC);
+    }
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    visibilityListenerRef.current = handleVisibilityChange;
 
     // Arm (or leave disarmed) this playthrough's session timer. Cancels
     // any stale grace-timeout from a PREVIOUS session that just ended —
@@ -723,6 +751,10 @@ export function useMetronomeEngine() {
   useEffect(() => {
     return () => {
       schedulerRef.current?.stop();
+      if (visibilityListenerRef.current) {
+        document.removeEventListener('visibilitychange', visibilityListenerRef.current);
+        visibilityListenerRef.current = null;
+      }
       engineRef.current?.close();
       if (endTickTimeoutRef.current) clearTimeout(endTickTimeoutRef.current);
       if (centerTickTimeoutRef.current) clearTimeout(centerTickTimeoutRef.current);

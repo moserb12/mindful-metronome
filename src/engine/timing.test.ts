@@ -56,6 +56,37 @@ describe('BeatScheduler (driven by a fake clock, no real timers)', () => {
     scheduler.stop();
   });
 
+  it('setLookaheadSec only affects beats not yet scheduled', () => {
+    let fakeNow = 0;
+    const scheduled: number[] = [];
+    const scheduler = new BeatScheduler(() => fakeNow, 60, (beat) => scheduled.push(beat.timeSec));
+
+    scheduler.start(0.1); // default 0.1s lookahead
+    expect(scheduled).toEqual([0.1]);
+
+    // Widen the lookahead (simulating a tab going into the background) —
+    // the next tick() call schedules everything newly within reach, in
+    // one burst, same as the "clock jumps forward" case above.
+    scheduler.setLookaheadSec(3);
+    fakeNow = 0.2;
+    scheduler.tick();
+    expect(scheduled).toEqual([0.1, 1.1, 2.1, 3.1]);
+
+    // Narrow it back down — already-scheduled beats (1.1/2.1/3.1) stay
+    // scheduled regardless; only the NEXT not-yet-due beat (4.1) is
+    // affected, and it isn't scheduled until it's actually within 0.1s.
+    scheduler.setLookaheadSec(0.1);
+    fakeNow = 3.95;
+    scheduler.tick();
+    expect(scheduled).toEqual([0.1, 1.1, 2.1, 3.1]);
+
+    fakeNow = 4.0;
+    scheduler.tick();
+    expect(scheduled).toEqual([0.1, 1.1, 2.1, 3.1, 4.1]);
+
+    scheduler.stop();
+  });
+
   it('setBpm changes the tempo for a fresh phase started after stop()', () => {
     let fakeNow = 0;
     const scheduled: number[] = [];

@@ -3,6 +3,41 @@
 This file is read automatically by Claude Code at the start of every session
 in this repo. Keep it up to date as decisions get made.
 
+## Status update — fixed a real latency bug: Sound effect / Beat pattern took up to 3s to change
+
+The builder reported a "pretty long delay" after changing the tick sound
+or Beat pattern while playing. Root cause: `BeatScheduler`
+(`src/engine/timing.ts`) commits real Web Audio oscillators (via
+`handleBeatScheduled` in `useMetronomeEngine.ts`) up to `lookaheadSec`
+ahead of when they actually sound — once committed, an oscillator's
+`tickSound`/`tickSubdivision` is baked in and can't be changed
+retroactively. `start()` was hardcoding a 3-second lookahead
+(`BACKGROUND_SAFE_LOOKAHEAD_SEC`) UNCONDITIONALLY, not just while the tab
+was backgrounded (its actual, deliberate purpose — surviving hidden-tab
+`setInterval` throttling) — so at any moment, up to 3 seconds of
+already-committed ticks (several beats' worth, depending on tempo) had to
+finish before a setting change became audible, every time, foreground or
+not.
+
+**Fix: the lookahead is now visibility-driven**, via a new
+`BeatScheduler.setLookaheadSec()` (`timing.ts`) and a `visibilitychange`
+listener added in `start()`/torn down in `stopPlaybackInternal()` and the
+unmount cleanup:
+- **Visible (the normal case):** `FOREGROUND_LOOKAHEAD_SEC = 0.2` —
+  small, on purpose: this window IS the worst-case delay before a Sound
+  effect/Beat pattern change is heard, so it needs to stay tiny. Verified
+  live (instrumented `OscillatorNode.prototype.start`) that a sound
+  change now reaches the audio graph in ~290ms, down from up to 3s.
+- **Hidden:** swaps to `BACKGROUND_SAFE_LOOKAHEAD_SEC = 3` automatically,
+  preserving the original background-safety guarantee exactly — a
+  background tab isn't where anyone's actively tweaking these settings
+  anyway, so the tradeoff only applies when it can't be felt.
+
+Shrinking the lookahead mid-flight is safe: it only affects the NEXT
+not-yet-scheduled beat (already-committed ones are unaffected either
+way), confirmed by a new `timing.test.ts` case exercising widen-then-
+narrow against a fake clock, alongside the existing scheduler tests.
+
 ## Status update — eye/mouth iteration + off-beat "&" tick
 
 The builder tried the Focus Companion pass live and sent back an annotated

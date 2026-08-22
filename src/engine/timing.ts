@@ -83,6 +83,18 @@ export class BeatScheduler {
     this.bpm = bpm;
   }
 
+  /** Change how far ahead beats get scheduled. Only affects FUTURE calls
+   * to tick() — a beat that's already been scheduled (its oscillator
+   * already created and started at some AudioContext time) can't be
+   * un-committed, so shrinking this doesn't retroactively speed up
+   * anything already in flight; it just means the NEXT not-yet-scheduled
+   * beat gets committed closer to when it actually sounds. See
+   * useMetronomeEngine.ts's visibility-driven lookahead swap for why a
+   * caller would want to change this at runtime. */
+  setLookaheadSec(lookaheadSec: number): void {
+    this.lookaheadSec = lookaheadSec;
+  }
+
   private get secondsPerBeat(): number {
     return 60 / this.bpm;
   }
