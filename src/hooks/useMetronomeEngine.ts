@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { BeatScheduler } from '../engine/timing';
-import { BinauralEngine, type NoiseType, type TickEarMode, type TickSound } from '../audio/binauralEngine';
+import { BinauralEngine, type NoiseType, type TickEarMode, type TickSound, type TickSubdivision } from '../audio/binauralEngine';
 import { classifyBeatFrequency, DEFAULT_PRESET } from '../data/bands';
 import { loadSettings, saveSettings } from '../storage/settingsStorage';
 import { decodeSettingsFromSearchParams, encodeSettingsToSearchParams, hasAnyCoreTuningParams } from '../urlState';
@@ -59,6 +59,7 @@ function resolveInitialSettings() {
     noiseType: urlOverrides.noiseType ?? stored.noiseType ?? ('pink' as NoiseType),
     panModulationDepth: stored.panModulationDepth ?? 0.6,
     tickEarMode: stored.tickEarMode ?? ('MATCH' as TickEarMode),
+    tickSubdivision: stored.tickSubdivision ?? ('ENDS' as TickSubdivision),
     // Default ON wherever the Vibration API actually exists (desktop
     // browsers don't have it at all, so this is moot there) — haptics are
     // opt-OUT, not opt-in, matching how every other feedback channel in
@@ -130,6 +131,7 @@ export interface ApplyablePresetFields {
   tickSound?: TickSound;
   panModulationDepth?: number;
   tickEarMode?: TickEarMode;
+  tickSubdivision?: TickSubdivision;
 }
 
 export interface SwingSegment {
@@ -220,6 +222,7 @@ export function useMetronomeEngine() {
   const [noiseType, setNoiseTypeState] = useState<NoiseType>(initialSettings.noiseType);
   const [panModulationDepth, setPanModulationDepthState] = useState(initialSettings.panModulationDepth); // 80/20 <-> 20/80 at the extremes, by default
   const [tickEarMode, setTickEarModeState] = useState<TickEarMode>(initialSettings.tickEarMode);
+  const [tickSubdivision, setTickSubdivisionState] = useState<TickSubdivision>(initialSettings.tickSubdivision);
   const [hapticsEnabled, setHapticsEnabledState] = useState(initialSettings.hapticsEnabled);
   const [sessionDurationMinutes, setSessionDurationMinutesState] = useState<number | null>(
     initialSettings.lastSelectedSessionDurationMinutes
@@ -256,9 +259,17 @@ export function useMetronomeEngine() {
     noiseType,
     panModulationDepth,
     tickEarMode,
+    tickSubdivision,
     hapticsEnabled,
   });
-  const wiggleTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Two independent timeouts (rather than the old single wiggleTimeoutRef,
+  // which was declared and cleared but never actually assigned anywhere —
+  // dead code, fixed as a drive-by correction while this function was
+  // rewritten for tick subdivision below) so the end-tick's and the
+  // center-tick's delayed visual/haptic callbacks can each be cleared
+  // independently without one canceling the other.
+  const endTickTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const centerTickTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   paramsRef.current = {
     carrierHz,
@@ -272,6 +283,7 @@ export function useMetronomeEngine() {
     noiseType,
     panModulationDepth,
     tickEarMode,
+    tickSubdivision,
     hapticsEnabled,
   };
 
@@ -304,30 +316,61 @@ export function useMetronomeEngine() {
     }
   }
 
+  /**
+   * `tickSubdivision` (see TickSubdivision in binauralEngine.ts) decides
+   * TWO independent things every beat: which tick(s) are actually AUDIBLE
+   * (the end-of-swing tick, the center-crossing "&" tick, or both), and —
+   * confirmed with the builder — which of those audible moment(s) drive
+   * the visual/haptic accent (`lastTickSide`/`tickCount`, which the arm's
+   * wiggle and the haptic vibration both key off). In 'CENTER' mode the
+   * end-arrival is silent and gets NO accent; the center-crossing drives
+   * it instead. In 'ENDS_AND_CENTER' both get one. 'ENDS' is byte-
+   * identical to the original single-tick behavior.
+   */
   const handleBeatScheduled = useCallback((beat: { beatIndex: number; timeSec: number }) => {
     const engine = engineRef.current;
     if (!engine) return;
     const side: 'left' | 'right' = beat.beatIndex % 2 === 0 ? 'left' : 'right';
+    const subdivision = paramsRef.current.tickSubdivision;
+    const secondsPerBeat = 60 / paramsRef.current.bpm;
+    const centerTimeSec = beat.timeSec + secondsPerBeat / 2;
+    const playsEnd = subdivision !== 'CENTER';
+    const playsCenter = subdivision !== 'ENDS';
 
-    engine.playTick(side, beat.timeSec);
+    if (playsEnd) engine.playTick(side, beat.timeSec);
+    if (playsCenter) engine.playCenterTick(centerTimeSec);
 
-    // Flip the wiggle/React-state trigger at the moment the tick actually
+    // Flip the wiggle/React-state trigger at the moment each tick actually
     // SOUNDS, not when it was merely scheduled (which is ~100ms early) —
     // a few ms of setTimeout jitter is invisible on a cosmetic wiggle, and
     // this is not clinical timing data.
-    const delayMs = Math.max(0, (beat.timeSec - engine.context.currentTime) * 1000);
-    setTimeout(() => {
-      setLastTickSide(side);
-      setTickCount((c) => c + 1);
-      // Same delayed-to-real-sounding-time callback the wiggle/neuron-pulse
-      // already use — riding that existing mechanism is what guarantees the
-      // haptic pulse lands in sync with the audible tick, without inventing
-      // a second timing path. Fire-and-forget, feature-detected: desktop
-      // browsers simply don't have `vibrate` at all.
-      if (paramsRef.current.hapticsEnabled && 'vibrate' in navigator) {
-        navigator.vibrate(15);
-      }
-    }, delayMs);
+    if (playsEnd) {
+      const delayMs = Math.max(0, (beat.timeSec - engine.context.currentTime) * 1000);
+      endTickTimeoutRef.current = setTimeout(() => {
+        setLastTickSide(side);
+        setTickCount((c) => c + 1);
+        // Fire-and-forget, feature-detected: desktop browsers simply
+        // don't have `vibrate` at all.
+        if (paramsRef.current.hapticsEnabled && 'vibrate' in navigator) {
+          navigator.vibrate(15);
+        }
+      }, delayMs);
+    }
+    if (playsCenter) {
+      // Opposite hemisphere from the side this beat just landed on: the
+      // pendulum is swinging TOWARD that side during the center-crossing
+      // (it arrives there at the NEXT end-tick), so that's the physically
+      // correct destination hemisphere for this pulse.
+      const centerSide: 'left' | 'right' = side === 'left' ? 'right' : 'left';
+      const centerDelayMs = Math.max(0, (centerTimeSec - engine.context.currentTime) * 1000);
+      centerTickTimeoutRef.current = setTimeout(() => {
+        setLastTickSide(centerSide);
+        setTickCount((c) => c + 1);
+        if (paramsRef.current.hapticsEnabled && 'vibrate' in navigator) {
+          navigator.vibrate(15);
+        }
+      }, centerDelayMs);
+    }
   }, []);
 
   /** Tears down audio/scheduler playback WITHOUT touching session state —
@@ -344,7 +387,8 @@ export function useMetronomeEngine() {
     schedulerRef.current?.stop();
     schedulerRef.current = null;
     engineRef.current?.stop();
-    if (wiggleTimeoutRef.current) clearTimeout(wiggleTimeoutRef.current);
+    if (endTickTimeoutRef.current) clearTimeout(endTickTimeoutRef.current);
+    if (centerTickTimeoutRef.current) clearTimeout(centerTickTimeoutRef.current);
     clearSessionPolling();
     setIsPlaying(false);
   }
@@ -554,6 +598,12 @@ export function useMetronomeEngine() {
     engineRef.current?.setTickEarMode(mode);
   }, []);
 
+  // No engine call — BinauralEngine never holds this value, it's read
+  // straight from paramsRef inside handleBeatScheduled every beat.
+  const setTickSubdivision = useCallback((subdivision: TickSubdivision) => {
+    setTickSubdivisionState(subdivision);
+  }, []);
+
   const setHapticsEnabled = useCallback((enabled: boolean) => {
     setHapticsEnabledState(enabled);
   }, []);
@@ -582,6 +632,7 @@ export function useMetronomeEngine() {
       if (preset.tickSound !== undefined) setTickSound(preset.tickSound);
       if (preset.panModulationDepth !== undefined) setPanModulationDepth(preset.panModulationDepth);
       if (preset.tickEarMode !== undefined) setTickEarMode(preset.tickEarMode);
+      if (preset.tickSubdivision !== undefined) setTickSubdivision(preset.tickSubdivision);
     },
     [
       setCarrierHz,
@@ -593,6 +644,7 @@ export function useMetronomeEngine() {
       setTickSound,
       setPanModulationDepth,
       setTickEarMode,
+      setTickSubdivision,
     ]
   );
 
@@ -643,6 +695,7 @@ export function useMetronomeEngine() {
         noiseType,
         panModulationDepth,
         tickEarMode,
+        tickSubdivision,
         hapticsEnabled,
         lastSelectedSessionDurationMinutes: sessionDurationMinutes,
       });
@@ -662,6 +715,7 @@ export function useMetronomeEngine() {
     noiseType,
     panModulationDepth,
     tickEarMode,
+    tickSubdivision,
     hapticsEnabled,
     sessionDurationMinutes,
   ]);
@@ -670,7 +724,8 @@ export function useMetronomeEngine() {
     return () => {
       schedulerRef.current?.stop();
       engineRef.current?.close();
-      if (wiggleTimeoutRef.current) clearTimeout(wiggleTimeoutRef.current);
+      if (endTickTimeoutRef.current) clearTimeout(endTickTimeoutRef.current);
+      if (centerTickTimeoutRef.current) clearTimeout(centerTickTimeoutRef.current);
       clearSessionPolling();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -688,6 +743,7 @@ export function useMetronomeEngine() {
     noiseType,
     panModulationDepth,
     tickEarMode,
+    tickSubdivision,
     hapticsEnabled,
     sessionDurationMinutes,
     sessionPhase,
@@ -710,6 +766,7 @@ export function useMetronomeEngine() {
     setNoiseType,
     setPanModulationDepth,
     setTickEarMode,
+    setTickSubdivision,
     setHapticsEnabled,
     setSessionDurationMinutes,
     updateDroneBalance,

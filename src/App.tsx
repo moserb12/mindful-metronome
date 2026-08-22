@@ -26,6 +26,7 @@ export default function App() {
       tickSound: engine.tickSound,
       panModulationDepth: engine.panModulationDepth,
       tickEarMode: engine.tickEarMode,
+      tickSubdivision: engine.tickSubdivision,
     });
   }
 
@@ -64,6 +65,7 @@ export default function App() {
           sessionRef={engine.sessionRef}
           sessionPhase={engine.sessionPhase}
           sessionRemainingSec={engine.sessionRemainingSec}
+          tickSubdivision={engine.tickSubdivision}
         />
 
         <div className="stage-readout">
@@ -97,6 +99,7 @@ export default function App() {
           noiseType={engine.noiseType}
           panModulationDepth={engine.panModulationDepth}
           tickEarMode={engine.tickEarMode}
+          tickSubdivision={engine.tickSubdivision}
           hapticsEnabled={engine.hapticsEnabled}
           onSetCarrierHz={engine.setCarrierHz}
           onSetBeatHz={engine.setBeatHz}
@@ -107,6 +110,7 @@ export default function App() {
           onSetNoiseType={engine.setNoiseType}
           onSetPanModulationDepth={engine.setPanModulationDepth}
           onSetTickEarMode={engine.setTickEarMode}
+          onSetTickSubdivision={engine.setTickSubdivision}
           onSetHapticsEnabled={engine.setHapticsEnabled}
           onApplyPreset={engine.applyPreset}
           getShareableLink={engine.getShareableLink}

@@ -8,7 +8,7 @@
 // you will ever recall.
 // ============================================================================
 
-import type { NoiseType, TickEarMode, TickSound } from '../audio/binauralEngine';
+import type { NoiseType, TickEarMode, TickSound, TickSubdivision } from '../audio/binauralEngine';
 
 export interface CustomPreset {
   /** `custom-<id>` — deliberately a different scheme from the built-in
@@ -27,6 +27,7 @@ export interface CustomPreset {
   tickSound: TickSound;
   panModulationDepth: number;
   tickEarMode: TickEarMode;
+  tickSubdivision: TickSubdivision;
   createdAt: number;
 }
 

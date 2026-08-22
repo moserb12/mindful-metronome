@@ -13,6 +13,7 @@ const VALID: PersistedSettings = {
   noiseType: 'brown',
   panModulationDepth: 0.4,
   tickEarMode: 'OPPOSITE',
+  tickSubdivision: 'ENDS_AND_CENTER',
   hapticsEnabled: true,
   lastSelectedSessionDurationMinutes: 20,
 };

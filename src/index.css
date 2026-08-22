@@ -224,19 +224,43 @@ select:hover {
   overflow: visible;
 }
 
+/* Invisible geometry-only tap target — see the long comment on this
+   element in MetronomeVisual.tsx for why it's a separate closed path from
+   the (now open, base-edge-less) visible .pyramid-outline below. */
+.pyramid-hit-target {
+  fill: transparent;
+  stroke: none;
+  cursor: pointer;
+  pointer-events: all;
+}
 .pyramid-outline {
   fill: none;
   stroke: rgba(255, 255, 255, 0.16);
   stroke-width: 1.5;
   stroke-linejoin: round;
+  stroke-linecap: round;
   animation: pyramid-breathe var(--mood-breathe-dur, 7s) var(--ease-soft) infinite;
-  cursor: pointer;
-  /* fill: none means nothing is "painted" in the triangle's interior, so
-     the default pointer-events (visiblePainted) would only let taps land
-     on the thin stroke line itself — `all` makes the whole triangle
-     tappable regardless of what's actually painted, which is what makes
-     this a reasonably sized, findable tap target rather than a sliver. */
-  pointer-events: all;
+  pointer-events: none;
+}
+.pyramid-base-edge {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.16);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  pointer-events: none;
+  transition: opacity var(--dur-slow) var(--ease-soft);
+}
+/* The occasional mouth flourish — same stroke treatment as the rest of
+   the outline so it reads as part of the same line, not a separate
+   decoration. Cross-fades with .pyramid-base-edge above (never both
+   visible at once) via opacity, not path morphing. */
+.pyramid-mouth {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.16);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  pointer-events: none;
+  transition: opacity var(--dur-slow) var(--ease-soft);
 }
 @keyframes pyramid-breathe {
   0%,
@@ -346,6 +370,23 @@ select:hover {
 .eye-outer.eye-wink {
   animation: eye-wink 0.25s var(--ease-harmonic) 1;
 }
+/* Idle-only blink (see the scheduling effect in MetronomeVisual.tsx) —
+   closes the WHOLE eye group (outer + iris + pupil), unlike .eye-wink
+   above which is scoped to just the outer ring and only fires on a tap. */
+@keyframes eye-blink {
+  0%,
+  100% {
+    transform: scaleY(1);
+  }
+  45% {
+    transform: scaleY(0.1);
+  }
+}
+.metronome-eye.eye-blink {
+  animation: eye-blink 0.26s var(--ease-harmonic) 1;
+  transform-box: fill-box;
+  transform-origin: center;
+}
 .eye-iris {
   fill: none;
   stroke: var(--band-color, #a78bfa);
@@ -381,14 +422,14 @@ select:hover {
 /* ---------- Eye clock face (active while a timed session is running) ---------- */
 
 .eye-clock-ticks,
-.eye-clock-hand,
+.eye-clock-ring-group,
 .eye-clock-text {
   opacity: 0;
   transition: opacity var(--dur-slow) var(--ease-soft);
   pointer-events: none;
 }
 .metronome-eye.has-session .eye-clock-ticks,
-.metronome-eye.has-session .eye-clock-hand,
+.metronome-eye.has-session .eye-clock-ring-group,
 .metronome-eye.has-session .eye-clock-text {
   opacity: 1;
 }
@@ -401,15 +442,24 @@ select:hover {
   stroke: rgba(255, 255, 255, 0.5);
   stroke-width: 1.5;
 }
-.eye-clock-hand {
+/* Rotated -90deg so a 0 dash-offset starts at 12 o'clock (matching
+   clockPoint()'s own clock-face convention) and sweeps clockwise as
+   stroke-dashoffset counts down — see the ring-fill comment in
+   MetronomeVisual.tsx's rAF loop. */
+.eye-clock-ring-group {
+  transform-origin: 200px 224px;
+  transform: rotate(-90deg);
+}
+.eye-clock-ring {
+  fill: none;
   stroke: var(--band-color, #a78bfa);
-  stroke-width: 2;
+  stroke-width: 3;
   stroke-linecap: round;
   filter: drop-shadow(0 0 4px var(--band-glow, rgba(167, 139, 250, 0.6)));
 }
 .eye-clock-text {
   fill: var(--text);
-  font-size: 11px;
+  font-size: 9px;
   font-variant-numeric: tabular-nums;
   font-weight: 600;
 }
@@ -1129,14 +1179,15 @@ select:hover {
   .metronome-visual,
   .stage-readout,
   .coming-soon-ufo,
-  .ufo-light {
+  .ufo-light,
+  .metronome-eye.eye-blink {
     animation: none;
   }
   .eye-pupil.tracking {
     transition: none;
   }
   .eye-clock-ticks,
-  .eye-clock-hand,
+  .eye-clock-ring-group,
   .eye-clock-text {
     transition: none;
   }

@@ -55,6 +55,24 @@ export type NoiseType = 'pink' | 'white' | 'brown';
  *     pendulum's position. */
 export type TickEarMode = 'MATCH' | 'OPPOSITE' | 'BOTH';
 
+/** WHEN ticks fire relative to the pendulum's swing cycle — orthogonal to
+ * TickEarMode above (WHICH EAR a tick is routed to). 'ENDS' is today's
+ * exact original behavior: a tick only when the pendulum arrives at a
+ * side. The center/"&" tick this adds ALWAYS fires dead-center (pan 0)
+ * regardless of TickEarMode — see playCenterTick(). Lives entirely in
+ * scheduling (useMetronomeEngine.ts's handleBeatScheduled), not in
+ * MetronomeParams — BinauralEngine itself never needs to know the current
+ * pattern, only how to play an end-tick or a center-tick when told to. */
+export type TickSubdivision = 'ENDS' | 'ENDS_AND_CENTER' | 'CENTER';
+
+/** Gain scale applied to the center/"&" tick relative to the main tick's
+ * own peak gain — confirmed with the builder: quieter (~50-60%) so the
+ * downbeat still reads as primary, kept at this SAME scale in every
+ * tickSubdivision mode (including CENTER-only) for one consistent,
+ * recognizable subdivision-click character rather than "turned up to
+ * compensate" when it's the only sound playing. */
+const CENTER_TICK_GAIN_SCALE = 0.55;
+
 export interface MetronomeParams {
   carrierHz: number;
   beatHz: number;
@@ -431,18 +449,19 @@ export class BinauralEngine {
     }
   }
 
-  /**
-   * Play one metronome tick at a precise pre-scheduled AudioContext time —
-   * never "now" (see src/engine/timing.ts's TimeDomainSync for why
-   * real-time scheduling matters). `matchSide` is the ear the pendulum's
-   * arm just arrived at; where the tick actually fires depends on
-   * `tickEarMode` (see resolveTickPan()).
-   */
-  playTick(matchSide: 'left' | 'right', atTimeSec: number): void {
+  /** Builds and fires one tick oscillator at a precise pre-scheduled
+   * AudioContext time — never "now" (see src/engine/timing.ts's
+   * TimeDomainSync for why real-time scheduling matters). Shared by
+   * `playTick()` (the main end-of-swing tick, pan resolved from
+   * `tickEarMode`) and `playCenterTick()` (the "&" off-beat tick, always
+   * centered) so the 4-case tickSound switch is never duplicated between
+   * them. `gainScale` multiplies each sound's own peak gain — 1 for the
+   * main tick, CENTER_TICK_GAIN_SCALE for the center tick. */
+  private fireTickOscillator(atTimeSec: number, panValue: number, gainScale: number): void {
     const osc = this.context.createOscillator();
     const gain = this.context.createGain();
     const panner = this.context.createStereoPanner();
-    panner.pan.value = this.resolveTickPan(matchSide);
+    panner.pan.value = clampPan(panValue);
 
     osc.connect(gain).connect(panner).connect(this.tickGain);
 
@@ -451,8 +470,8 @@ export class BinauralEngine {
         osc.type = 'triangle';
         osc.frequency.setValueAtTime(1200, atTimeSec);
         osc.frequency.exponentialRampToValueAtTime(100, atTimeSec + 0.03);
-        gain.gain.setValueAtTime(0.8, atTimeSec);
-        gain.gain.exponentialRampToValueAtTime(0.001, atTimeSec + 0.03);
+        gain.gain.setValueAtTime(0.8 * gainScale, atTimeSec);
+        gain.gain.exponentialRampToValueAtTime(0.001 * gainScale, atTimeSec + 0.03);
         osc.start(atTimeSec);
         osc.stop(atTimeSec + 0.03);
         break;
@@ -460,16 +479,16 @@ export class BinauralEngine {
         osc.type = 'sine';
         osc.frequency.setValueAtTime(150, atTimeSec);
         osc.frequency.exponentialRampToValueAtTime(30, atTimeSec + 0.12);
-        gain.gain.setValueAtTime(1.0, atTimeSec);
-        gain.gain.exponentialRampToValueAtTime(0.001, atTimeSec + 0.12);
+        gain.gain.setValueAtTime(1.0 * gainScale, atTimeSec);
+        gain.gain.exponentialRampToValueAtTime(0.001 * gainScale, atTimeSec + 0.12);
         osc.start(atTimeSec);
         osc.stop(atTimeSec + 0.12);
         break;
       case 'hihat':
         osc.type = 'square';
         osc.frequency.setValueAtTime(4000, atTimeSec);
-        gain.gain.setValueAtTime(0.3, atTimeSec);
-        gain.gain.exponentialRampToValueAtTime(0.001, atTimeSec + 0.02);
+        gain.gain.setValueAtTime(0.3 * gainScale, atTimeSec);
+        gain.gain.exponentialRampToValueAtTime(0.001 * gainScale, atTimeSec + 0.02);
         osc.start(atTimeSec);
         osc.stop(atTimeSec + 0.02);
         break;
@@ -477,12 +496,28 @@ export class BinauralEngine {
       default:
         osc.type = 'sine';
         osc.frequency.setValueAtTime(this.params.carrierHz, atTimeSec);
-        gain.gain.setValueAtTime(0.7, atTimeSec);
-        gain.gain.exponentialRampToValueAtTime(0.001, atTimeSec + 0.08);
+        gain.gain.setValueAtTime(0.7 * gainScale, atTimeSec);
+        gain.gain.exponentialRampToValueAtTime(0.001 * gainScale, atTimeSec + 0.08);
         osc.start(atTimeSec);
         osc.stop(atTimeSec + 0.08);
         break;
     }
+  }
+
+  /**
+   * Play one metronome tick at a precise pre-scheduled AudioContext time.
+   * `matchSide` is the ear the pendulum's arm just arrived at; where the
+   * tick actually fires depends on `tickEarMode` (see resolveTickPan()).
+   */
+  playTick(matchSide: 'left' | 'right', atTimeSec: number): void {
+    this.fireTickOscillator(atTimeSec, this.resolveTickPan(matchSide), 1);
+  }
+
+  /** The "&" off-beat tick (see TickSubdivision) — ALWAYS dead-center
+   * (pan 0), regardless of TickEarMode, and always at
+   * CENTER_TICK_GAIN_SCALE — both confirmed, not configurable. */
+  playCenterTick(atTimeSec: number): void {
+    this.fireTickOscillator(atTimeSec, 0, CENTER_TICK_GAIN_SCALE);
   }
 
   close(): void {

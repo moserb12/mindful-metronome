@@ -3,6 +3,132 @@
 This file is read automatically by Claude Code at the start of every session
 in this repo. Keep it up to date as decisions get made.
 
+## Status update — eye/mouth iteration + off-beat "&" tick
+
+The builder tried the Focus Companion pass live and sent back an annotated
+screenshot with six follow-ups. Two turned into real design decisions,
+resolved via clarifying questions before implementing:
+
+**1. The pupil goes back to tracking the pendulum/tick, always.** Making
+the eye a session clock (§6 of the prior pass) had repurposed the pupil
+into a sweeping clock hand whenever a session was active — the builder
+wants it back to its original job unconditionally, session or no
+session. The timed-session readout moved onto the IRIS instead (next
+point) rather than the pupil.
+
+**2. The iris is now a 60-minute fill ring**, not a clock hand.
+`SessionState.durationSec` already equals `minutes * 60`, so
+`elapsedSec / 3600` (clamped) is exactly the fill fraction with zero
+special-casing: a 15-min session ends with the ring exactly 1/4 full, 30
+min at half, 45 min at 3/4, 60 min fully round — literally "how much of
+an hour you have," per the builder's own framing. Drawn via the standard
+`stroke-dasharray`/`stroke-dashoffset` progress-ring technique, radius 28
+(between the iris at 22 and the tick-mark ring at 23-37), rotated -90deg
+so it sweeps from 12 o'clock. `CLOCK_HAND_RADIUS`/the old
+`<line className="eye-clock-hand">` are gone entirely.
+⚠️ Infinite duration needed no special case — picking it never creates a
+`SessionState` at all, so the ring mechanic already doesn't run for it.
+
+**A real race, found and fixed while restoring the pupil's job:**
+Pause/Stop starts the settle-tail (a ~700ms JS/rAF decay of the arm back
+to vertical, added in the prior pass) AND the mouse-tracking effect in
+the same render. Mouse-tracking used to arm itself immediately — adding
+`.tracking` (a CSS-transitioned class) to the pupil the instant it
+mounted, before any actual pointer move — which smeared the settle-tail's
+own precise per-frame `setAttribute` writes through an unwanted extra
+CSS transition, and let a stray pointermove mid-settle straight-up
+override it. Fixed with `settlingRef`: mouse-tracking now polls it via
+`requestAnimationFrame` and waits for the settle-tail to actually finish
+before taking control of the pupil — exactly as long as THIS settle
+takes, not a guessed fixed delay.
+
+**3. Idle-only blink** — a periodic (3-7s gap, ~260ms close), natural
+close-and-open on the WHOLE eye group, distinct from the existing
+tap-triggered `.eye-wink` (which stays scoped to just the outer ring and
+only fires on a click). Scoped to `!isPlaying` per the builder's own
+wording ("during idle"); skipped entirely under
+`prefers-reduced-motion: reduce`.
+
+**4. Pyramid mouth flourish** — the base edge (the pyramid's own bottom
+line, between `BASE_LEFT`/`BASE_RIGHT`) occasionally, briefly reads as a
+mouth (smile/sigh/smirk/consider), cross-faded in via opacity on an
+8-20s interval, ~2s hold, then back to the plain neutral line — NOT true
+path morphing, just an opacity swap between fixed `d` strings (matches
+this file's existing `.eye-clock-*` fade convention). All four
+expressions keep both endpoints fixed at the pyramid's real corners, only
+the control point moves — SVG y grows downward, so a control point below
+the baseline dips the curve's middle down (corners read "up" — a smile),
+above it droops the corners (a sigh); an off-center control point biases
+the peak toward one side for an asymmetric smirk or a subtler
+"considering" waver. Runs whether playing or idle (unlike the blink —
+the builder didn't scope this one to idle, framing it as ongoing
+character).
+⚠️ Splitting the base edge out of the pyramid's own closed path (so it
+could be an independent, swappable element) meant the pyramid's tap
+target — previously that same closed path, using the `pointer-events:
+all`-on-a-closed-shape trick to make the WHOLE triangle interior
+clickable, not just its stroke — needed to become its own separate,
+invisible `.pyramid-hit-target` path underneath the now-open, base-edge-
+less visible outline. Verified live that a click on the pyramid's
+interior (not just its stroke lines) still triggers the ping.
+
+**5. Pendulum drone panning merged into the Tick Ear control-group** — no
+longer its own standalone box between Volume Mixer and Tick Ear; the
+panning slider now lives directly above the Match/Opposite/Both buttons,
+one visual unit, per the builder's sketch circling them together.
+
+**6. NEW — tick subdivision, a genuine audio-scheduling feature, not a
+relabel.** The builder wanted an optional SECOND tick at the pendulum's
+CENTER-crossing (the "&" in "1 & 2 & 3 & 4 &"), independent of the
+existing end-of-swing tick — confirmed over several rounds of
+clarification once it became clear this wasn't just a UI tweak. New
+`TickSubdivision` type (`binauralEngine.ts`): `'ENDS'` (default, today's
+original single-tick behavior) / `'ENDS_AND_CENTER'` / `'CENTER'` (the
+builder's "None" — the end-tick goes silent, only the "&" sounds).
+Persisted exactly like `tickEarMode` (settingsStorage + full-snapshot
+custom presets), deliberately NOT part of shareable links' "core tuning"
+set, same tier as `tickEarMode`.
+
+Confirmed, load-bearing decisions:
+- `TickEarMode` (Match/Opposite/Both) keeps controlling ONLY the
+  end-tick's ear placement, completely unchanged. The new center/"&"
+  tick ALWAYS fires dead-center (pan 0), not configurable — ⚠️ this also
+  clarified that `TickEarMode`'s existing `'BOTH'` option already WAS
+  dead-center panning all along; nothing needed to change there, it was
+  purely a naming/discoverability question the builder had, not a
+  missing feature.
+- The center tick is quieter than the main tick (`CENTER_TICK_GAIN_SCALE
+  = 0.55`, `binauralEngine.ts`) — kept at that SAME scale in every mode,
+  including `CENTER`-only, for one consistent subdivision-click
+  character rather than "turned up to compensate" when it's the only
+  sound playing.
+- The haptic buzz and the arm's wiggle accent follow whichever tick(s)
+  are actually AUDIBLE, not always the physical end-arrival. In `CENTER`
+  mode the silent end-arrival gets NO accent at all — the
+  center-crossing drives both the wiggle (`MetronomeVisual.tsx`, two
+  independently-gated `wiggleFor()` calls sharing one decay shape) and
+  the haptic/`lastTickSide`/`tickCount` state (`useMetronomeEngine.ts`'s
+  `handleBeatScheduled`, now scheduling up to two delayed callbacks per
+  beat via `endTickTimeoutRef`/`centerTickTimeoutRef`).
+  ⚠️ Fixed a small pre-existing bug while rewriting this function: the
+  old `wiggleTimeoutRef` was declared and `clearTimeout`'d in two places
+  but never actually assigned anywhere — dead code from whenever the
+  wiggle/haptic callback was last touched. The two new refs are both
+  genuinely used now.
+- UI label: "Beat pattern" — "On the beat" / "On the beat + off-beat" /
+  "Off-beat only", its own control-group right after the merged Tick
+  Ear/Panning group, before Haptics (WHEN ticks fire is a distinct
+  concept from WHERE they're routed).
+
+All new ambient motion (blink, mouth scheduling) respects
+`prefers-reduced-motion: reduce`, verified live — as is the pupil's
+restored tick-tracking during an active session, the ring's fill math,
+the settle-tail/mouse-tracking race fix (confirmed a real pointer move
+right after Pause correctly waits for the settle to finish first), and
+the pyramid's full-interior tap target post-split. `npx tsc -b`,
+`npx vitest run` (55 tests, unchanged — this pass is UI/scheduling
+wiring, not new pure-function surface), and `npm run build` all clean.
+
 ## Status update — "Focus Companion" pass: mood, physics, session-clock eye
 
 Following the delight pass below, the builder asked for the pyramid-eye

@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { BANDS, MAX_BPM, MIN_BPM, type BrainwaveBand } from '../../data/bands';
+import type { TickSubdivision } from '../../audio/binauralEngine';
 import { MOOD_BY_BAND } from '../../data/moods';
 import { buildSmoothPath, clamp, pendulumEase, waveOffset } from '../../engine/motion';
 import { formatCountdown } from '../../format';
 import {
-  computeSessionPhase,
   computeSwingSegment,
   type SessionState,
   type SessionPlaybackPhase,
@@ -26,14 +26,24 @@ const SETTLE_MS = 700;
 /** Base snake-wave amplitude in SVG units, before the band's mood
  * multiplier and the ramp-in/settle factor are applied. */
 const BASE_WAVE_AMPLITUDE = 2.5;
-/** How far the eye's clock hand reaches from center while a timed session
- * is active — deliberately BETWEEN the iris (r=22) and the tick-mark ring
- * (r=23-37, see CLOCK_TICKS below), so the hand visibly points INTO the
- * tick band rather than staying trapped inside the iris. Distinct from
- * PUPIL_MAX_OFFSET (10), which governs the much subtler swing/mouse-
- * tracking glance — the clock hand is a different, more deliberate motion
- * and reads better with real reach. */
-const CLOCK_HAND_RADIUS = 30;
+/** The center-crossing wiggle's amplitude relative to the end-arrival
+ * wiggle's — deliberately the SAME numeric value as binauralEngine.ts's
+ * CENTER_TICK_GAIN_SCALE (two separately-defined constants kept in
+ * numeric parity by convention, not a shared import — audio and visual
+ * layers don't currently share constants) so the off-beat accent reads
+ * as visually "quieter" in lockstep with how it sounds quieter. */
+const CENTER_WIGGLE_SCALE = 0.55;
+/** Radius of the iris fill-ring showing session progress against a fixed
+ * 60-minute dial — see the ring-fill comment in the rAF loop below.
+ * Deliberately BETWEEN the iris (r=22) and the tick-mark ring (r=23-37,
+ * see CLOCK_TICKS below). */
+const CLOCK_RING_RADIUS = 28;
+const CLOCK_RING_CIRCUMFERENCE = 2 * Math.PI * CLOCK_RING_RADIUS;
+/** The fixed reference the iris ring fills against — NOT the session's own
+ * duration. Because SessionState.durationSec already equals
+ * `minutes * 60`, `elapsedSec / HOUR_DIAL_SEC` alone lands exactly on
+ * 0.25/0.5/0.75/1.0 at 15/30/45/60 minutes, with zero special-casing. */
+const HOUR_DIAL_SEC = 3600;
 
 // ============================================================================
 // MetronomeVisual — the "quantum metronome": an eye at the center of a
@@ -54,12 +64,18 @@ const CLOCK_HAND_RADIUS = 30;
 // "Focus companion" pass: the pyramid/eye now carry a per-band MOOD
 // (src/data/moods.ts — sleepy/chill/peaceful/happy/energized), the swing
 // uses a more physically-weighted easing curve, the rod resonates with a
-// traveling snake-wave tied to BPM, motion eases in on Play and settles
-// out on Pause/Stop, and — while a timed session is running — the eye
-// itself becomes a ticking clock face showing the remaining time. NONE of
-// this changes WHEN a beat lands or what BinauralEngine hears: the ramp/
-// mood/wave math only reshapes the RENDERED swing, never `panValue` (fed
-// to onSwingUpdate at full amplitude, every frame, exactly as before).
+// traveling snake-wave tied to BPM, and motion eases in on Play and
+// settles out on Pause/Stop. NONE of this changes WHEN a beat lands or
+// what BinauralEngine hears: the ramp/mood/wave math only reshapes the
+// RENDERED swing, never `panValue` (fed to onSwingUpdate at full
+// amplitude, every frame, exactly as before).
+//
+// The pupil ALWAYS tracks the pendulum's tip (or the cursor, while idle)
+// — it never stops doing that job, session or no session. While a timed
+// session is running, the IRIS itself becomes a fill-ring showing progress
+// against a fixed 60-minute dial (so a 15-min session ends with the ring
+// exactly 1/4 full, 30 min at half, etc.), with a numeral readout alongside
+// it — a separate visual layer from the pupil, not a replacement for it.
 // ============================================================================
 
 const VIEW = 400;
@@ -119,6 +135,23 @@ const CLOCK_TICKS = Array.from({ length: 12 }, (_, i) => {
   return { x1: inner.x, y1: inner.y, x2: outer.x, y2: outer.y, major };
 });
 
+/** Four mouth expressions for the pyramid's base-edge flourish (see the
+ * mouth-scheduling effect below) — each a single quadratic Bezier with
+ * BOTH endpoints fixed at BASE_LEFT/BASE_RIGHT (so it always reads as
+ * sitting exactly where the neutral base edge sits), only the control
+ * point moves. SVG y grows DOWNWARD: a control point pushed below the
+ * baseline dips the curve's middle down, which reads as the CORNERS being
+ * raised — a smile (⌣). Pushed above the baseline, the corners read as
+ * drooping — a sigh (⌢). An off-center control point biases the curve's
+ * peak toward one side for an asymmetric smirk or a subtler "considering"
+ * waver. */
+const MOUTH_SHAPES = {
+  smile: `M ${BASE_LEFT.x} ${BASE_LEFT.y} Q 200 336 ${BASE_RIGHT.x} ${BASE_RIGHT.y}`,
+  sigh: `M ${BASE_LEFT.x} ${BASE_LEFT.y} Q 200 308 ${BASE_RIGHT.x} ${BASE_RIGHT.y}`,
+  smirk: `M ${BASE_LEFT.x} ${BASE_LEFT.y} Q 260 306 ${BASE_RIGHT.x} ${BASE_RIGHT.y}`,
+  consider: `M ${BASE_LEFT.x} ${BASE_LEFT.y} Q 210 316 ${BASE_RIGHT.x} ${BASE_RIGHT.y}`,
+} as const;
+
 interface NeuronClusterProps {
   side: 'left' | 'right';
   color: string;
@@ -175,7 +208,9 @@ function NeuronCluster({ side, color, pulseToken }: NeuronClusterProps) {
 /** How far the pupil can drift from the iris's center while tracking the
  * pendulum or the cursor, in SVG units. Iris radius is 22, pupil radius 9
  * — this keeps the pupil comfortably inside the iris at full deflection.
- * NOT used for the session-clock hand mode — see CLOCK_HAND_RADIUS. */
+ * The pupil ALWAYS does this job now, session or no session — the timed-
+ * session readout lives entirely in the iris fill-ring instead (see
+ * CLOCK_RING_RADIUS). */
 const PUPIL_MAX_OFFSET = 10;
 
 /** Where along the rod the weight can slide, in SVG units from the pivot.
@@ -260,9 +295,9 @@ interface MetronomeVisualProps {
   bpm: number;
   onSetBpm: (bpm: number) => void;
   /** Raw session reference (or null when no timed session is armed) — read
-   * DIRECTLY inside the rAF loop every frame via computeSessionPhase(),
-   * exactly like `swingRef`, rather than relying on the 250ms-polled
-   * `sessionPhase`/`sessionRemainingSec` React state. This sidesteps a
+   * DIRECTLY inside the rAF loop every frame, exactly like `swingRef`,
+   * rather than relying on the 250ms-polled `sessionPhase`/
+   * `sessionRemainingSec` React state. This sidesteps a
    * real staleness risk: `sessionRef.current` can flip from null to a
    * real session (or back) WHILE isPlaying stays true (e.g. picking a
    * duration mid-play), which would NOT re-run this effect since
@@ -272,6 +307,12 @@ interface MetronomeVisualProps {
   sessionRef: React.RefObject<SessionState | null>;
   sessionPhase: SessionPlaybackPhase;
   sessionRemainingSec: number | null;
+  /** Which tick(s) are currently audible — see TickSubdivision's doc
+   * comment in binauralEngine.ts. Drives which of the arm's two wiggle
+   * accents (end-arrival, center-crossing) are active — see the
+   * `tickSubdivisionRef` comment in the rAF loop below for why this is
+   * read via a ref rather than a plain closed-over prop. */
+  tickSubdivision: TickSubdivision;
 }
 
 export function MetronomeVisual({
@@ -288,11 +329,12 @@ export function MetronomeVisual({
   sessionRef,
   sessionPhase,
   sessionRemainingSec,
+  tickSubdivision,
 }: MetronomeVisualProps) {
   const armRef = useRef<SVGGElement | null>(null);
   const armPathRef = useRef<SVGPathElement | null>(null);
   const pupilRef = useRef<SVGCircleElement | null>(null);
-  const clockHandLineRef = useRef<SVGLineElement | null>(null);
+  const ringRef = useRef<SVGCircleElement | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const smoothedRef = useRef<number[] | null>(null);
@@ -305,6 +347,23 @@ export function MetronomeVisual({
   /** The last rendered wave amplitude — seeds the settle-tail's wave
    * decay the same way. */
   const lastWaveAmplitudeRef = useRef(0);
+  /** True for the duration of the settle-tail (see the `!isPlaying`
+   * branch below). The separate mouse-tracking effect checks this before
+   * taking control of the pupil's cx/cy — without it, Pause/Stop starts
+   * BOTH the settle-tail's precise per-frame writes AND mouse-tracking's
+   * `.tracking` CSS-transitioned writes on the exact same pupil element in
+   * the same render, and whichever one touches the DOM last (or a stray
+   * pointermove mid-settle) wins, smearing or overriding the intended
+   * settle curve. */
+  const settlingRef = useRef(false);
+  // frame()'s rAF effect only re-runs on [isPlaying, bandInfo.color,
+  // onSwingUpdate] — adding tickSubdivision there would wrongly restart
+  // the ramp-in every time the "Beat pattern" control is toggled mid-
+  // play. Read it fresh via a ref instead, kept in sync every render body
+  // (same technique useMetronomeEngine.ts uses for
+  // sessionDurationMinutesRef).
+  const tickSubdivisionRef = useRef(tickSubdivision);
+  tickSubdivisionRef.current = tickSubdivision;
 
   const bandInfo = BANDS[band];
   const mood = MOOD_BY_BAND[band];
@@ -338,6 +397,74 @@ export function MetronomeVisual({
     return () => {
       if (pyramidPingTimeoutRef.current) clearTimeout(pyramidPingTimeoutRef.current);
       if (eyeWinkTimeoutRef.current) clearTimeout(eyeWinkTimeoutRef.current);
+    };
+  }, []);
+
+  // Idle-only blink: a periodic, natural-feeling close-and-open, distinct
+  // from the tap-triggered .eye-wink above (that one's a direct response
+  // to a click, scoped to just the outer ring; this one closes the WHOLE
+  // eye group and fires on its own while nobody's touching anything).
+  // Gated on !isPlaying per the builder's own framing ("during idle") —
+  // while playing, the pupil/wiggle/wave are already carrying the
+  // instrument's "alive" quality, a blink would just be visual noise
+  // fighting the beat-synced motion.
+  const [blinking, setBlinking] = useState(false);
+  useEffect(() => {
+    if (isPlaying) return;
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    let closeTimeout: ReturnType<typeof setTimeout> | null = null;
+    let nextBlinkTimeout: ReturnType<typeof setTimeout> | null = null;
+
+    function scheduleNextBlink() {
+      const gapMs = 3000 + Math.random() * 4000; // 3-7s
+      nextBlinkTimeout = setTimeout(() => {
+        setBlinking(true);
+        closeTimeout = setTimeout(() => {
+          setBlinking(false);
+          scheduleNextBlink();
+        }, 260);
+      }, gapMs);
+    }
+    scheduleNextBlink();
+
+    return () => {
+      if (closeTimeout) clearTimeout(closeTimeout);
+      if (nextBlinkTimeout) clearTimeout(nextBlinkTimeout);
+      setBlinking(false);
+    };
+  }, [isPlaying]);
+
+  // Pyramid mouth flourish: the base edge occasionally, briefly reads as a
+  // mouth (smile/sigh/smirk/consider), cross-faded in via opacity rather
+  // than true path morphing — matches this file's existing convention for
+  // the eye-clock-* fades, no extra libraries needed. Runs whether playing
+  // or idle (per the builder — this one's ongoing character, not an idle
+  // tell like the blink above).
+  const [mouthShape, setMouthShape] = useState<keyof typeof MOUTH_SHAPES>('smile');
+  const [mouthVisible, setMouthVisible] = useState(false);
+  useEffect(() => {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const shapes = Object.keys(MOUTH_SHAPES) as (keyof typeof MOUTH_SHAPES)[];
+    let hideTimeout: ReturnType<typeof setTimeout> | null = null;
+    let showTimeout: ReturnType<typeof setTimeout> | null = null;
+
+    function scheduleNextExpression() {
+      const gapMs = 8000 + Math.random() * 12000; // 8-20s
+      showTimeout = setTimeout(() => {
+        setMouthShape(shapes[Math.floor(Math.random() * shapes.length)]);
+        setMouthVisible(true);
+        hideTimeout = setTimeout(() => {
+          setMouthVisible(false);
+          scheduleNextExpression();
+        }, 2000);
+      }, gapMs);
+    }
+    scheduleNextExpression();
+
+    return () => {
+      if (hideTimeout) clearTimeout(hideTimeout);
+      if (showTimeout) clearTimeout(showTimeout);
+      setMouthVisible(false);
     };
   }, []);
 
@@ -376,6 +503,15 @@ export function MetronomeVisual({
     pupilRef.current.setAttribute('cy', String(EYE.y + offsetY));
   }
 
+  /** The decaying-vibration shape shared by both wiggle accents (end-
+   * arrival, center-crossing) — `sinceSec` is elapsed time since whichever
+   * moment is being accented. Scaled by the band's mood (energized bands
+   * wiggle harder), matching the original single-accent formula exactly. */
+  function wiggleFor(sinceSec: number): number {
+    if (sinceSec < 0 || sinceSec >= 0.35) return 0;
+    return Math.exp(-sinceSec * 14) * Math.sin(sinceSec * 60) * 4 * mood.wiggleMul;
+  }
+
   function snapToRest() {
     if (armRef.current) armRef.current.setAttribute('transform', `rotate(0 ${PIVOT.x} ${PIVOT.y})`);
     if (armPathRef.current) armPathRef.current.setAttribute('d', buildArmPathD(0, 0));
@@ -385,6 +521,7 @@ export function MetronomeVisual({
     }
     lastAngleRef.current = 0;
     lastWaveAmplitudeRef.current = 0;
+    settlingRef.current = false;
   }
 
   useEffect(() => {
@@ -407,21 +544,13 @@ export function MetronomeVisual({
 
       const startAngle = lastAngleRef.current;
       const startAmplitude = lastWaveAmplitudeRef.current;
-      // A natural session end holds sessionPhase at 'ended' for a few
-      // seconds so the eye's clock face reads as "complete" rather than
-      // instantly reverting — captured once here (accurate for this
-      // short-lived purpose: it won't flip back to 'idle' until well
-      // after this settle tail finishes) so the pupil-decay step below
-      // can skip touching the frozen clock-hand position during that
-      // window. The arm/wave still settle regardless — different
-      // elements, orthogonal to what the eye is showing.
-      const skipPupilDecay = sessionPhase === 'ended';
 
       if (Math.abs(startAngle) < 0.01 && startAmplitude < 0.01) {
         snapToRest();
         return;
       }
 
+      settlingRef.current = true;
       const startTime = performance.now(); // wall clock — the AudioContext may already be torn down by stop()
       function settleFrame() {
         const t = clamp((performance.now() - startTime) / SETTLE_MS, 0, 1);
@@ -432,7 +561,7 @@ export function MetronomeVisual({
 
         if (armRef.current) armRef.current.setAttribute('transform', `rotate(${angle} ${PIVOT.x} ${PIVOT.y})`);
         if (armPathRef.current) armPathRef.current.setAttribute('d', buildArmPathD(amplitude, 0));
-        if (!skipPupilDecay) setPupilFromAngle(angle);
+        setPupilFromAngle(angle);
         lastAngleRef.current = angle;
         lastWaveAmplitudeRef.current = amplitude;
 
@@ -501,13 +630,22 @@ export function MetronomeVisual({
         const toPan = segment.toSide === 'left' ? -1 : 1;
         panValue = fromPan + (toPan - fromPan) * eased;
 
-        // A short, decaying vibration layered on top the instant the tip
-        // arrives at a side (when the tick actually sounds) — the
-        // "wiggle" the tone triggers, distinct from the smooth swing.
-        // Scaled by the band's mood (energized bands wiggle harder).
-        const sinceArrival = now - segment.toTimeSec;
-        if (sinceArrival >= 0 && sinceArrival < 0.35) {
-          wiggle = Math.exp(-sinceArrival * 14) * Math.sin(sinceArrival * 60) * 4 * mood.wiggleMul;
+        // A short, decaying vibration layered on top the instant a tick
+        // actually sounds — the "wiggle" the tone triggers, distinct from
+        // the smooth swing. Scaled by the band's mood (energized bands
+        // wiggle harder). Two independently-gated accents share one decay
+        // shape: the end-arrival (today's original single accent) and the
+        // center-crossing "&" — see TickSubdivision's doc comment.
+        // Confirmed scope: in CENTER mode the (silent) end-arrival gets
+        // NO accent; the center-crossing drives it instead.
+        const subdivision = tickSubdivisionRef.current;
+        if (subdivision !== 'CENTER') {
+          const sinceArrival = now - segment.toTimeSec;
+          wiggle += wiggleFor(sinceArrival);
+        }
+        if (subdivision !== 'ENDS') {
+          const centerCrossSec = segment.fromTimeSec + span / 2; // geometric midpoint, independent of audio scheduling
+          wiggle += wiggleFor(now - centerCrossSec) * CENTER_WIGGLE_SCALE;
         }
       }
 
@@ -533,29 +671,23 @@ export function MetronomeVisual({
       lastWaveAmplitudeRef.current = waveAmplitude;
       if (armPathRef.current) armPathRef.current.setAttribute('d', buildArmPathD(waveAmplitude, wavePhase));
 
-      // Eye contents: a timed session (if armed) takes precedence over the
-      // normal swing-tracking pupil. Read `sessionRef.current` directly
-      // (fresh every frame, see the prop's doc comment above) rather than
-      // the polled `sessionPhase` prop, and derive the exact fraction via
-      // computeSessionPhase() — the same pure function the hook itself
-      // uses, so the hand's sweep is perfectly smooth between polls
-      // without needing a second timing mechanism.
+      // The eye watches the pendulum: look toward wherever the tip
+      // currently is, using the SAME angle (including the wiggle) that
+      // just moved the arm, so the eye reacts to the tick too. Always —
+      // session or no session; the timed-session readout lives in the
+      // iris fill-ring below, not in the pupil.
+      setPupilFromAngle(totalAngle);
+
+      // Iris fill-ring: read `sessionRef.current` directly (fresh every
+      // frame, see the prop's doc comment above) rather than the polled
+      // `sessionPhase` prop. `elapsedSec / HOUR_DIAL_SEC` alone gives the
+      // exact fill fraction against the fixed 60-minute dial — see
+      // HOUR_DIAL_SEC's doc comment for why no further scaling is needed.
       const session = sessionRef.current;
-      if (session) {
-        const phaseNow = computeSessionPhase(now, session);
-        const progress = clamp(1 - phaseNow.remainingSec / session.durationSec, 0, 1);
-        const handPoint = clockPoint(progress * 360, CLOCK_HAND_RADIUS);
-        pupilRef.current?.setAttribute('cx', String(handPoint.x));
-        pupilRef.current?.setAttribute('cy', String(handPoint.y));
-        clockHandLineRef.current?.setAttribute('x2', String(handPoint.x));
-        clockHandLineRef.current?.setAttribute('y2', String(handPoint.y));
-      } else {
-        // The eye watches the pendulum: look toward wherever the tip
-        // currently is, using the SAME angle (including the wiggle) that
-        // just moved the arm, so the eye reacts to the tick too.
-        setPupilFromAngle(totalAngle);
-        clockHandLineRef.current?.setAttribute('x2', String(EYE.x));
-        clockHandLineRef.current?.setAttribute('y2', String(EYE.y));
+      if (session && ringRef.current) {
+        const elapsedSec = now - session.startTimeSec;
+        const ringProgress = clamp(elapsedSec / HOUR_DIAL_SEC, 0, 1);
+        ringRef.current.setAttribute('stroke-dashoffset', String(CLOCK_RING_CIRCUMFERENCE * (1 - ringProgress)));
       }
 
       drawWaveform();
@@ -643,9 +775,13 @@ export function MetronomeVisual({
     const pupil = pupilRef.current;
     if (!svg || !pupil) return;
 
-    pupil.classList.add('tracking');
+    let armed = false;
+    let armRafId: number | null = null;
 
     function handlePointerMove(e: PointerEvent) {
+      // Defensive re-check: even once armed, never fight the settle-tail
+      // for control of cx/cy (see settlingRef's doc comment).
+      if (settlingRef.current) return;
       const rect = svg!.getBoundingClientRect();
       if (rect.width === 0 || rect.height === 0) return;
       const scaleX = VIEW / rect.width;
@@ -664,12 +800,31 @@ export function MetronomeVisual({
       pupil!.setAttribute('cy', String(EYE.y + offsetY));
     }
 
-    window.addEventListener('pointermove', handlePointerMove);
+    // Wait out any in-progress settle-tail before taking over the pupil —
+    // arming immediately (the old behavior) raced the settle-tail's own
+    // per-frame writes on the exact same element. Polling settlingRef via
+    // rAF (rather than a fixed guessed delay) waits exactly as long as
+    // THIS settle actually takes, whatever SETTLE_MS/the arm's angle at
+    // Pause make that be.
+    function tryArm() {
+      if (settlingRef.current) {
+        armRafId = requestAnimationFrame(tryArm);
+        return;
+      }
+      armed = true;
+      pupil!.classList.add('tracking');
+      window.addEventListener('pointermove', handlePointerMove);
+    }
+    tryArm();
+
     return () => {
-      window.removeEventListener('pointermove', handlePointerMove);
-      pupil.classList.remove('tracking');
-      pupil.setAttribute('cx', String(EYE.x));
-      pupil.setAttribute('cy', String(EYE.y));
+      if (armRafId !== null) cancelAnimationFrame(armRafId);
+      if (armed) {
+        window.removeEventListener('pointermove', handlePointerMove);
+        pupil.classList.remove('tracking');
+        pupil.setAttribute('cx', String(EYE.x));
+        pupil.setAttribute('cy', String(EYE.y));
+      }
     };
   }, [isPlaying, sessionPhase]);
 
@@ -695,9 +850,16 @@ export function MetronomeVisual({
         role="img"
         aria-label="Mindful Metronome visual"
       >
+        {/* Invisible, geometry-only tap target — the full closed triangle,
+            same as this element used to be before its base edge was split
+            out into separate neutral/mouth paths below (see §4 of the
+            eye/mouth iteration plan). `pointer-events: all` on a CLOSED
+            path makes its whole interior clickable regardless of fill, but
+            that trick needs the closed geometry — the two now-open visible
+            side-paths below can't provide it on their own. */}
         <path
           d={`M ${PIVOT.x} 48 L ${BASE_RIGHT.x} ${BASE_RIGHT.y} L ${BASE_LEFT.x} ${BASE_LEFT.y} Z`}
-          className={`pyramid-outline ${pyramidPinging ? 'pyramid-ping' : ''}`}
+          className="pyramid-hit-target"
           role="button"
           tabIndex={0}
           aria-label="Ping the pyramid"
@@ -708,6 +870,23 @@ export function MetronomeVisual({
               handlePyramidTap();
             }
           }}
+        />
+        <path
+          d={`M ${PIVOT.x} 48 L ${BASE_RIGHT.x} ${BASE_RIGHT.y} M ${PIVOT.x} 48 L ${BASE_LEFT.x} ${BASE_LEFT.y}`}
+          className={`pyramid-outline ${pyramidPinging ? 'pyramid-ping' : ''}`}
+          aria-hidden="true"
+        />
+        <path
+          d={`M ${BASE_LEFT.x} ${BASE_LEFT.y} L ${BASE_RIGHT.x} ${BASE_RIGHT.y}`}
+          className="pyramid-base-edge"
+          style={{ opacity: mouthVisible ? 0 : 1 }}
+          aria-hidden="true"
+        />
+        <path
+          d={MOUTH_SHAPES[mouthShape]}
+          className="pyramid-mouth"
+          style={{ opacity: mouthVisible ? 1 : 0 }}
+          aria-hidden="true"
         />
 
         <NeuronCluster side="left" color={bandInfo.color} pulseToken={lastTickSide === 'left' ? `L${tickCount}` : 'L-idle'} />
@@ -721,7 +900,7 @@ export function MetronomeVisual({
 
         <circle cx={PIVOT.x} cy={PIVOT.y} r={5} className="metronome-pivot-dot" />
 
-        <g className={`metronome-eye ${hasSession ? 'has-session' : ''}`}>
+        <g className={`metronome-eye ${hasSession ? 'has-session' : ''} ${blinking ? 'eye-blink' : ''}`}>
           <circle
             cx={EYE.x}
             cy={EYE.y}
@@ -751,10 +930,20 @@ export function MetronomeVisual({
               />
             ))}
           </g>
-          <line ref={clockHandLineRef} x1={EYE.x} y1={EYE.y} x2={EYE.x} y2={EYE.y} className="eye-clock-hand" aria-hidden="true" />
+          <g className="eye-clock-ring-group" aria-hidden="true">
+            <circle
+              ref={ringRef}
+              cx={EYE.x}
+              cy={EYE.y}
+              r={CLOCK_RING_RADIUS}
+              className="eye-clock-ring"
+              strokeDasharray={CLOCK_RING_CIRCUMFERENCE}
+              strokeDashoffset={CLOCK_RING_CIRCUMFERENCE}
+            />
+          </g>
           <circle ref={pupilRef} cx={EYE.x} cy={EYE.y} r={9} className="eye-pupil" />
           {hasSession && (
-            <text x={EYE.x} y={EYE.y} textAnchor="middle" dominantBaseline="central" className="eye-clock-text">
+            <text x={EYE.x} y={EYE.y + 13} textAnchor="middle" dominantBaseline="central" className="eye-clock-text">
               {formatCountdown(sessionRemainingSec ?? 0)}
             </text>
           )}

@@ -14,7 +14,7 @@ import { NOISE_SHIELDS, NOISE_SHIELD_ORDER } from '../../data/noiseShields';
 import { VIBE_GREETINGS } from '../../data/greetings';
 import type { CustomPreset } from '../../data/customPresets';
 import type { ApplyablePresetFields } from '../../hooks/useMetronomeEngine';
-import type { NoiseType, TickEarMode, TickSound } from '../../audio/binauralEngine';
+import type { NoiseType, TickEarMode, TickSound, TickSubdivision } from '../../audio/binauralEngine';
 
 interface ControlPanelProps {
   carrierHz: number;
@@ -28,6 +28,7 @@ interface ControlPanelProps {
   noiseType: NoiseType;
   panModulationDepth: number;
   tickEarMode: TickEarMode;
+  tickSubdivision: TickSubdivision;
   hapticsEnabled: boolean;
   onSetCarrierHz: (hz: number) => void;
   onSetBeatHz: (hz: number) => void;
@@ -38,6 +39,7 @@ interface ControlPanelProps {
   onSetNoiseType: (type: NoiseType) => void;
   onSetPanModulationDepth: (depth: number) => void;
   onSetTickEarMode: (mode: TickEarMode) => void;
+  onSetTickSubdivision: (subdivision: TickSubdivision) => void;
   onSetHapticsEnabled: (enabled: boolean) => void;
   onApplyPreset: (preset: ApplyablePresetFields) => void;
   getShareableLink: () => string;
@@ -174,6 +176,16 @@ const TICK_EAR_OPTIONS: { value: TickEarMode; label: string; title: string }[] =
   { value: 'BOTH', label: 'Both', title: 'Tick fires centered, equally in both ears' },
 ];
 
+const TICK_SUBDIVISION_OPTIONS: { value: TickSubdivision; label: string; title: string }[] = [
+  { value: 'ENDS', label: 'On the beat', title: 'Tick only when the pendulum reaches each side' },
+  {
+    value: 'ENDS_AND_CENTER',
+    label: 'On the beat + off-beat',
+    title: 'Tick on arrival, plus a softer tick as it passes center',
+  },
+  { value: 'CENTER', label: 'Off-beat only', title: 'Tick only as the pendulum passes center — no tick on arrival' },
+];
+
 /** Preview text for the current pan-modulation split at full swing, e.g.
  * "80/20" — mirrors exactly what the listener will hear at the extremes. */
 function splitPreviewLabel(depth: number): string {
@@ -194,6 +206,7 @@ export function ControlPanel({
   noiseType,
   panModulationDepth,
   tickEarMode,
+  tickSubdivision,
   hapticsEnabled,
   onSetCarrierHz,
   onSetBeatHz,
@@ -204,6 +217,7 @@ export function ControlPanel({
   onSetNoiseType,
   onSetPanModulationDepth,
   onSetTickEarMode,
+  onSetTickSubdivision,
   onSetHapticsEnabled,
   onApplyPreset,
   getShareableLink,
@@ -376,7 +390,7 @@ export function ControlPanel({
 
       <div className="control-group">
         <div className="control-row-header">
-          <span className="control-label">Pendulum drone panning</span>
+          <span className="control-label">Tick ear</span>
           <span className="control-value">{splitPreviewLabel(panModulationDepth)} at the extremes</span>
         </div>
         <input
@@ -391,10 +405,6 @@ export function ControlPanel({
           As the pendulum swings, the drone's L/R balance follows it. 0% keeps it always 50/50; 100% swings fully
           between 100/0 and 0/100. The center is always 50/50.
         </p>
-      </div>
-
-      <div className="control-group">
-        <span className="control-label">Tick ear</span>
         <div className="ear-mode-row" style={{ '--chip-color': BANDS[band].color } as React.CSSProperties}>
           {TICK_EAR_OPTIONS.map((opt) => (
             <button
@@ -403,6 +413,23 @@ export function ControlPanel({
               className={`ear-mode-btn ${tickEarMode === opt.value ? 'active' : ''}`}
               title={opt.title}
               onClick={() => onSetTickEarMode(opt.value)}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="control-group">
+        <span className="control-label">Beat pattern</span>
+        <div className="ear-mode-row" style={{ '--chip-color': BANDS[band].color } as React.CSSProperties}>
+          {TICK_SUBDIVISION_OPTIONS.map((opt) => (
+            <button
+              key={opt.value}
+              type="button"
+              className={`ear-mode-btn ${tickSubdivision === opt.value ? 'active' : ''}`}
+              title={opt.title}
+              onClick={() => onSetTickSubdivision(opt.value)}
             >
               {opt.label}
             </button>

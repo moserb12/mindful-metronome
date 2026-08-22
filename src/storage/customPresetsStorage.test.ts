@@ -16,6 +16,7 @@ const PRESET: CustomPreset = {
   tickSound: 'wood',
   panModulationDepth: 0.4,
   tickEarMode: 'OPPOSITE',
+  tickSubdivision: 'ENDS_AND_CENTER',
   createdAt: 1700000000000,
 };
 
