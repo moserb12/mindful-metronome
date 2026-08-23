@@ -496,6 +496,17 @@ function Pendant({ medallionId, onTap, pendantRef }: PendantProps) {
       }}
     >
       <circle cx={PIVOT.x} cy={tipY} r={PENDANT_HIT_RADIUS} className="pendant-hit-target" />
+      {/* A short "bail" — the small link a real pendant hangs from —
+          bridging the rod's true endpoint into wherever the glyph sits.
+          Several glyphs (infinity's crossing point, the hourglass's
+          pinch, crescent-moon's off-center cutout, lightbulb's stroke-
+          only ring) have little or no painted material exactly at their
+          own local center, which is what gets pinned to tipY — without
+          this, those medallions can render with a visible gap between
+          the rod and the pendant. This is intentionally small and
+          rod-colored (not a big backing circle) so it still reads as
+          "the rod ending in a loop," not "an icon inside a dot." */}
+      <line x1={PIVOT.x} y1={tipY - 6} x2={PIVOT.x} y2={tipY + 6} className="pendant-link" />
       <g className="pendant-glyph" transform={`translate(${PIVOT.x} ${tipY}) scale(${PENDANT_GLYPH_SCALE}) translate(-50 -50)`}>
         <MedallionGlyph id={medallionId} color={color} />
       </g>

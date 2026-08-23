@@ -379,6 +379,16 @@ select:hover {
   transform-box: fill-box;
   transform-origin: center;
 }
+/* The short "bail" bridging the rod into the glyph — see its JSX
+   comment in MetronomeVisual.tsx. Same color as the rod itself
+   (.metronome-arm-line) so it reads as a continuation of it, not a
+   separate bead. */
+.pendant-link {
+  stroke: var(--band-color, #a78bfa);
+  stroke-width: 3;
+  stroke-linecap: round;
+  pointer-events: none;
+}
 .metronome-pendant:hover .pendant-glyph,
 .metronome-pendant:focus-visible .pendant-glyph {
   filter: drop-shadow(0 0 12px var(--band-glow, rgba(167, 139, 250, 0.8)));
