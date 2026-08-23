@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { BANDS, MAX_BPM, MIN_BPM, type BrainwaveBand } from '../../data/bands';
 import type { TickSubdivision } from '../../audio/binauralEngine';
-import type { MedallionId } from '../../data/medallions';
+import { MEDALLIONS_BY_ID, type MedallionId } from '../../data/medallions';
 import { MOOD_BY_BAND } from '../../data/moods';
 import { buildSmoothPath, clamp, pendulumEase, waveOffset } from '../../engine/motion';
-import { computeSwingSegment, type SessionPlaybackPhase, type SwingState } from '../../hooks/useMetronomeEngine';
-import { MedallionIcon } from '../Dashboard/MedallionIcon';
+import { computeSwingSegment, type SessionPlaybackPhase, type SessionState, type SwingState } from '../../hooks/useMetronomeEngine';
+import { MedallionGlyph } from '../Dashboard/MedallionIcon';
 import { MedallionPicker } from './MedallionPicker';
 
 /** BPM change per pixel dragged — tuned so the full rod's on-screen length
@@ -60,12 +60,15 @@ const CENTER_WIGGLE_SCALE = 0.55;
 //
 // The pupil ALWAYS tracks the pendulum's tip (or the cursor, while idle)
 // — it never stops doing that job, session or no session. An earlier pass
-// also turned the iris itself into a session countdown (a fill-wedge +
-// numeral), but that's been removed per the builder's ask — the numeric
-// countdown lives in SessionTimer.tsx again instead. `sessionPhase` is
-// still threaded through (see the idle-tracking effect below), just not
-// `sessionRef`/`sessionRemainingSec` anymore — nothing else in this file
-// needs a live per-frame read of the session clock.
+// turned the iris itself into a session countdown (a from-center fill-
+// wedge + numeral), then removed it entirely because the wedge visually
+// painted over the pupil whenever the pupil's live position fell inside
+// the swept angle. It's back now as an ANNULAR ring living entirely
+// outside eye-outer's radius (see EYE_TIMER_INNER_R/EYE_TIMER_OUTER_R
+// below) — geometrically incapable of touching the pupil, since the ring
+// never reaches EYE's center at all, unlike the old wedge. The numeral
+// countdown is deliberately NOT part of it — that stays in
+// SessionTimer.tsx only, to avoid recreating clutter at the eye's center.
 // ============================================================================
 
 const VIEW = 400;
@@ -116,6 +119,73 @@ const MOUTH_SHAPES = {
   smirk: `M ${BASE_LEFT.x} ${BASE_LEFT.y} Q 260 306 ${BASE_RIGHT.x} ${BASE_RIGHT.y}`,
   consider: `M ${BASE_LEFT.x} ${BASE_LEFT.y} Q 210 316 ${BASE_RIGHT.x} ${BASE_RIGHT.y}`,
 } as const;
+
+/** Fixed 60-minute dial the session ring is drawn against — a 15-min
+ * session therefore starts at exactly 90° (1/4 sweep) and shrinks toward
+ * 0° as time runs out, regardless of which duration was actually picked
+ * — same "kitchen timer" behavior as a mechanical dial timer. */
+const HOUR_DIAL_SEC = 3600;
+
+/** The ring's inner/outer radii, in SVG units from EYE. Chosen to sit
+ * entirely OUTSIDE eye-outer's live max radius (r=38, breathing up to
+ * ~39.3) and well inside the pyramid edges' ~67.9-unit clearance and the
+ * nearest neuron node's ~80.5-unit clearance — a currently-empty band
+ * that can never touch the iris(22)/pupil(max dist 19)/eye-outer(38),
+ * fixing the old wedge's "paints over the pupil" bug by construction:
+ * the band never reaches EYE's center at all. */
+const EYE_TIMER_INNER_R = 44;
+const EYE_TIMER_OUTER_R = 58;
+
+/** Tick geometry — minor ticks sit inside the ring band so they read
+ * faintly through the translucent fill (ticks painted first, ring on top
+ * at partial opacity); major ticks (every 3rd, i.e. the 0/15/30/45-min
+ * marks) poke slightly past both edges for emphasis, staying inside
+ * 42..60 — still clear of eye-outer and the pyramid clearance. */
+const EYE_TIMER_TICK_MINOR_INNER = 46;
+const EYE_TIMER_TICK_MINOR_OUTER = 56;
+const EYE_TIMER_TICK_MAJOR_INNER = 42;
+const EYE_TIMER_TICK_MAJOR_OUTER = 60;
+
+/** 0° = straight up from EYE, sweeping clockwise. */
+function clockPoint(angleDeg: number, radius: number): { x: number; y: number } {
+  const rad = (angleDeg * Math.PI) / 180;
+  return { x: EYE.x + radius * Math.sin(rad), y: EYE.y - radius * Math.cos(rad) };
+}
+
+/** Builds a shrinking ANNULAR SECTOR — a thick ring band swept from 0° to
+ * `sweepDeg`, confined between `innerR` and `outerR`. Four segments: out
+ * along the outer arc, straight line in to the inner radius, back along
+ * the inner arc, close. Unlike a from-center pie slice (`M EYE.x EYE.y L
+ * ... Z`), this never touches EYE's own center at any sweep angle — the
+ * direct fix for the removed wedge's "paints over the pupil" bug. At
+ * sweepDeg=0 this collapses to a degenerate (invisible) path, matching a
+ * fully-elapsed session. */
+function buildAnnularWedgePathD(sweepDeg: number, innerR: number, outerR: number): string {
+  const clamped = Math.max(0, Math.min(sweepDeg, 359.9));
+  const outerStart = clockPoint(0, outerR);
+  const outerEnd = clockPoint(clamped, outerR);
+  const innerEnd = clockPoint(clamped, innerR);
+  const innerStart = clockPoint(0, innerR);
+  const largeArc = clamped > 180 ? 1 : 0;
+  return [
+    `M ${outerStart.x} ${outerStart.y}`,
+    `A ${outerR} ${outerR} 0 ${largeArc} 1 ${outerEnd.x} ${outerEnd.y}`,
+    `L ${innerEnd.x} ${innerEnd.y}`,
+    `A ${innerR} ${innerR} 0 ${largeArc} 0 ${innerStart.x} ${innerStart.y}`,
+    'Z',
+  ].join(' ');
+}
+
+/** 12 ticks, one per 5 real minutes (30° = 5min on the 60-min dial),
+ * every 3rd (0/15/30/45-min positions) drawn major/bolder for a classic
+ * clock-face read, styled after a kitchen-timer dial. */
+const EYE_TIMER_TICKS = Array.from({ length: 12 }, (_, i) => {
+  const angleDeg = i * 30;
+  const major = i % 3 === 0;
+  const inner = clockPoint(angleDeg, major ? EYE_TIMER_TICK_MAJOR_INNER : EYE_TIMER_TICK_MINOR_INNER);
+  const outer = clockPoint(angleDeg, major ? EYE_TIMER_TICK_MAJOR_OUTER : EYE_TIMER_TICK_MINOR_OUTER);
+  return { x1: inner.x, y1: inner.y, x2: outer.x, y2: outer.y, major };
+});
 
 interface NeuronClusterProps {
   side: 'left' | 'right';
@@ -223,7 +293,33 @@ const BAGEL_RY = 11;
 const BAGEL_HOLE_RX = 6.5;
 const BAGEL_HOLE_RY = 4;
 const BAGEL_COLOR = '#c9924f';
-const MEDALLION_CHARM_SIZE = 13;
+/** Scale factor for MedallionGlyph's fixed 0..100 local viewBox onto the
+ * pendant's real (400-unit) coordinate space, applied via
+ * translate(cx,cy) scale(s) translate(-50,-50) — SVG transforms compose
+ * right-to-left: re-center the glyph's local (50,50) origin to (0,0)
+ * first, then scale, then move to the real pendant position.
+ *
+ * Most glyphs' effective bounding radius from their local center is
+ * ~27-32 units. At scale 0.65 those land at real radius ~18-22 —
+ * comfortably bigger than the old 13px charm (previously only ~6.5-unit
+ * radius, i.e. the pendant used to be roughly 3x too small to easily
+ * eye-track) and in the same ballpark as TempoWeight's own shapes
+ * (~15-23 SVG units).
+ *
+ * Not normalized across glyphs — every glyph keeps its own honest
+ * proportions. The largest (crescent-moon's offset cutout circle,
+ * lightbulb, flame — each ~36-39 local units from center) land at
+ * ~24.7-25.4 real units, which clears the ~39.8-unit margin from tipY to
+ * the viewBox's bottom edge with room to spare regardless of which
+ * medallion is equipped. */
+const PENDANT_GLYPH_SCALE = 0.65;
+
+/** Invisible hit-target radius for the pendant — generous enough to
+ * fully enclose even the largest glyphs, mirroring TempoWeight's
+ * WEIGHT_HIT_RADIUS precedent. Critical for sparse glyphs (snowflake's
+ * thin arms, the spiral/infinity band-orb glyphs) that would otherwise
+ * be nearly unclickable outside their painted strokes. */
+const PENDANT_HIT_RADIUS = 28;
 /** Uniform invisible hit-target radius shared by all 5 weight shapes —
  * roughly the bagel's own equivalent-area radius, so every shape gets a
  * comparably generous grab area regardless of how thin its silhouette is
@@ -377,6 +473,7 @@ interface PendantProps {
  */
 function Pendant({ medallionId, onTap, pendantRef }: PendantProps) {
   const tipY = PIVOT.y + ARM_LENGTH;
+  const color = MEDALLIONS_BY_ID[medallionId].color;
   return (
     <g
       ref={pendantRef}
@@ -398,16 +495,10 @@ function Pendant({ medallionId, onTap, pendantRef }: PendantProps) {
         }
       }}
     >
-      <circle cx={PIVOT.x} cy={tipY} r={7} className="metronome-arm-tip" />
-      <foreignObject
-        x={PIVOT.x - MEDALLION_CHARM_SIZE / 2}
-        y={tipY - MEDALLION_CHARM_SIZE / 2}
-        width={MEDALLION_CHARM_SIZE}
-        height={MEDALLION_CHARM_SIZE}
-        className="pendant-charm"
-      >
-        <MedallionIcon id={medallionId} size={MEDALLION_CHARM_SIZE} />
-      </foreignObject>
+      <circle cx={PIVOT.x} cy={tipY} r={PENDANT_HIT_RADIUS} className="pendant-hit-target" />
+      <g className="pendant-glyph" transform={`translate(${PIVOT.x} ${tipY}) scale(${PENDANT_GLYPH_SCALE}) translate(-50 -50)`}>
+        <MedallionGlyph id={medallionId} color={color} />
+      </g>
     </g>
   );
 }
@@ -423,6 +514,10 @@ interface MetronomeVisualProps {
   bpm: number;
   onSetBpm: (bpm: number) => void;
   sessionPhase: SessionPlaybackPhase;
+  /** Live per-frame read of the session clock, driving the eye's timer
+   * ring only — sessionRemainingSec (the polled mm:ss value) stays
+   * App-level, feeding only SessionTimer.tsx. */
+  sessionRef: React.RefObject<SessionState | null>;
   /** Which tick(s) are currently audible — see TickSubdivision's doc
    * comment in binauralEngine.ts. Drives which of the arm's two wiggle
    * accents (end-arrival, center-crossing) are active — see the
@@ -449,6 +544,7 @@ export function MetronomeVisual({
   bpm,
   onSetBpm,
   sessionPhase,
+  sessionRef,
   tickSubdivision,
   selectedMedallionId,
   unlockedMedallionIds,
@@ -457,6 +553,7 @@ export function MetronomeVisual({
   const armRef = useRef<SVGGElement | null>(null);
   const armPathRef = useRef<SVGPathElement | null>(null);
   const pupilRef = useRef<SVGCircleElement | null>(null);
+  const timerRingRef = useRef<SVGPathElement | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const smoothedRef = useRef<number[] | null>(null);
@@ -489,6 +586,7 @@ export function MetronomeVisual({
 
   const bandInfo = BANDS[band];
   const mood = MOOD_BY_BAND[band];
+  const hasSession = sessionPhase !== 'idle';
 
   // Two small, purely decorative one-shot flourishes — tapping the pyramid
   // outline or the eye's outer ring plays a brief animation via a toggled
@@ -814,6 +912,19 @@ export function MetronomeVisual({
       // iris fill-ring below, not in the pupil.
       setPupilFromAngle(totalAngle);
 
+      // Session-timer ring: fixed 60-min dial, so a 15-min session starts
+      // at exactly 90° and shrinks to 0° as time runs out. Reads
+      // sessionRef directly (a plain ref, not React state) so this needs
+      // no extra effect dependency and never re-triggers the ramp-in —
+      // same technique as swingRef above it.
+      const session = sessionRef.current;
+      if (session && timerRingRef.current) {
+        const elapsedSec = now - session.startTimeSec;
+        const remainingSec = Math.max(0, session.durationSec - elapsedSec);
+        const sweepDeg = clamp(remainingSec / HOUR_DIAL_SEC, 0, 1) * 360;
+        timerRingRef.current.setAttribute('d', buildAnnularWedgePathD(sweepDeg, EYE_TIMER_INNER_R, EYE_TIMER_OUTER_R));
+      }
+
       drawWaveform();
       rafRef.current = requestAnimationFrame(frame);
     }
@@ -1026,7 +1137,7 @@ export function MetronomeVisual({
 
         <circle cx={PIVOT.x} cy={PIVOT.y} r={5} className="metronome-pivot-dot" />
 
-        <g className={`metronome-eye ${blinking ? 'eye-blink' : ''}`}>
+        <g className={`metronome-eye ${blinking ? 'eye-blink' : ''} ${hasSession ? 'has-session' : ''}`}>
           <circle
             cx={EYE.x}
             cy={EYE.y}
@@ -1045,6 +1156,28 @@ export function MetronomeVisual({
           />
           <circle cx={EYE.x} cy={EYE.y} r={22} className="eye-iris" />
           <circle ref={pupilRef} cx={EYE.x} cy={EYE.y} r={9} className="eye-pupil" />
+
+          {/* Session countdown ring — deliberately no numeral here (the
+              mm:ss countdown lives only in SessionTimer.tsx). Ticks
+              painted first so the translucent ring reads on top of them. */}
+          <g className="eye-timer-ticks" aria-hidden="true">
+            {EYE_TIMER_TICKS.map((t, i) => (
+              <line
+                key={i}
+                x1={t.x1}
+                y1={t.y1}
+                x2={t.x2}
+                y2={t.y2}
+                className={`eye-timer-tick ${t.major ? 'eye-timer-tick-major' : ''}`}
+              />
+            ))}
+          </g>
+          <path
+            ref={timerRingRef}
+            className="eye-timer-ring"
+            d={buildAnnularWedgePathD(0, EYE_TIMER_INNER_R, EYE_TIMER_OUTER_R)}
+            aria-hidden="true"
+          />
         </g>
       </svg>
       <p className="tempo-weight-hint">Drag the weight to change tempo, tap the pendant to swap medallions — {bpm} BPM</p>

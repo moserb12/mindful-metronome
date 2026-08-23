@@ -10,10 +10,10 @@ import { BANDS } from './bands';
 //     time IN that band (see BAND_MINUTES_TO_UNLOCK below). These are the
 //     direct payoff for the per-band duration stats the dashboard tracks —
 //     "you've actually spent time here" made visible and collectible.
-//   - Nine "milestone" glyphs (star, raindrop, moon, sun, lightbulb, leaf,
-//     snowflake, yin-yang, flame), unlocked by cumulative total time or by
-//     daily-practice streak length. These reward showing up over the long
-//     haul rather than any one session.
+//   - Ten "milestone" glyphs (spark, star, raindrop, crescent moon, sun,
+//     lightbulb, leaf, snowflake, yin-yang, flame), unlocked by cumulative
+//     total time or by daily-practice streak length. These reward showing
+//     up over the long haul rather than any one session.
 //
 // Deliberately NOT stored as an explicit "unlocked" list in localStorage —
 // every unlock rule here is a pure function of FocusStats (total seconds

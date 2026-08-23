@@ -300,11 +300,6 @@ select:hover {
   filter: drop-shadow(0 0 6px var(--band-glow, rgba(167, 139, 250, 0.5)));
   transition: stroke 0.6s ease;
 }
-.metronome-arm-tip {
-  fill: var(--band-color, #a78bfa);
-  filter: drop-shadow(0 0 8px var(--band-glow, rgba(167, 139, 250, 0.6)));
-  transition: fill 0.6s ease;
-}
 .metronome-pivot-dot {
   fill: rgba(255, 255, 255, 0.35);
 }
@@ -372,17 +367,30 @@ select:hover {
 .metronome-pendant {
   cursor: pointer;
 }
-.metronome-pendant:hover .metronome-arm-tip,
-.metronome-pendant:focus-visible .metronome-arm-tip {
-  filter: drop-shadow(0 0 12px var(--band-glow, rgba(167, 139, 250, 0.8)));
+/* The pendant's visible shape is the medallion's own glyph geometry
+   (MedallionGlyph), rendered directly in native SVG at the arm's tip —
+   no uniform circle badge behind it, matching TempoWeight's own
+   no-badge, drop-shadow-glow convention. The glow uses --band-glow (the
+   live band) even though the glyph's own fill is the medallion's fixed
+   identity color — same split .tempo-weight-body already uses. */
+.pendant-glyph {
+  filter: drop-shadow(0 0 8px var(--band-glow, rgba(167, 139, 250, 0.6)));
+  transition: filter var(--dur-base) var(--ease-soft), transform var(--dur-fast) var(--ease-harmonic);
+  transform-box: fill-box;
+  transform-origin: center;
 }
-/* The medallion charm sits in a <foreignObject> nested inside the
-   pendant's own <g> — pointer-events disabled so a click right over the
-   charm still hits the pendant's onClick (tap opens the picker) instead
-   of being swallowed by the icon's inner <svg>. */
-.pendant-charm {
-  pointer-events: none;
-  overflow: visible;
+.metronome-pendant:hover .pendant-glyph,
+.metronome-pendant:focus-visible .pendant-glyph {
+  filter: drop-shadow(0 0 12px var(--band-glow, rgba(167, 139, 250, 0.8)));
+  transform: scale(1.08);
+}
+/* A separate invisible hit-target, same reasoning as
+   .tempo-weight-hit-target — critical for sparse glyphs (thin strokes,
+   lots of empty space) that would otherwise be nearly unclickable
+   outside their painted pixels. */
+.pendant-hit-target {
+  fill: rgba(0, 0, 0, 0.001);
+  pointer-events: all;
 }
 
 .eye-outer {
@@ -452,6 +460,35 @@ select:hover {
    pupil perpetually lag behind the beat instead of syncing crisply. */
 .eye-pupil.tracking {
   transition: cx 0.28s var(--ease-soft), cy 0.28s var(--ease-soft);
+}
+/* Session countdown ring — an annular band living entirely outside
+   eye-outer (see EYE_TIMER_INNER_R/EYE_TIMER_OUTER_R in
+   MetronomeVisual.tsx), so it can never visually collide with the pupil.
+   Fades in/out with .has-session, driven by sessionPhase. */
+.eye-timer-ticks,
+.eye-timer-ring {
+  opacity: 0;
+  transition: opacity var(--dur-slow) var(--ease-soft);
+  pointer-events: none;
+}
+.metronome-eye.has-session .eye-timer-ticks {
+  opacity: 1;
+}
+.metronome-eye.has-session .eye-timer-ring {
+  opacity: 0.8;
+}
+.eye-timer-tick {
+  stroke: rgba(255, 255, 255, 0.28);
+  stroke-width: 1;
+  stroke-linecap: round;
+}
+.eye-timer-tick-major {
+  stroke: rgba(255, 255, 255, 0.5);
+  stroke-width: 1.5;
+}
+.eye-timer-ring {
+  fill: var(--band-color, #a78bfa);
+  filter: drop-shadow(0 0 6px var(--band-glow, rgba(167, 139, 250, 0.5)));
 }
 @keyframes eye-breathe {
   0%,
@@ -1275,6 +1312,10 @@ details[open] > .control-group-summary .control-group-chevron,
     animation: none;
   }
   .eye-pupil.tracking {
+    transition: none;
+  }
+  .eye-timer-ticks,
+  .eye-timer-ring {
     transition: none;
   }
   /* A plain opacity fade instead of the drop-shadow bloom — no

@@ -3,6 +3,79 @@
 This file is read automatically by Claude Code at the start of every session
 in this repo. Keep it up to date as decisions get made.
 
+## Status update — annular session-timer ring, shaped pendant, band-orb glyph redesign
+
+Three related visual changes, all confined to `MetronomeVisual.tsx` plus
+small companions.
+
+**The session countdown is back at the eye, redesigned as an annular
+ring.** It existed twice before (see the older status entries below) and
+was removed entirely because the shrinking pie WEDGE — drawn
+`M EYE.x EYE.y L ... Z`, starting AT the eye's own center — visually
+painted over the pupil whenever the pupil's live position fell inside the
+swept angle. The builder's own annotated screenshot drew the fix
+directly: a "pupil zone" circle tight around the eye, and a separate
+"timer zone" arc OUTSIDE it, never overlapping. `buildAnnularWedgePathD()`
+makes that literal — a 2-radius annular SECTOR (`EYE_TIMER_INNER_R=44` to
+`EYE_TIMER_OUTER_R=58`, both well outside `eye-outer`'s r=38) that
+geometrically can never reach EYE's center at any sweep angle, unlike the
+old wedge. It fills with `var(--band-color)` ("matches the pyramid") and
+shrinks on a fixed 60-minute dial (`HOUR_DIAL_SEC`) — a 15-min session
+therefore starts at exactly a 1/4 sweep and empties toward nothing as
+time runs out, styled after a mechanical kitchen-timer dial, per the
+builder's reference photo. 12 tick marks (`EYE_TIMER_TICKS`, one per 5
+real minutes), every 3rd major/bolder for the 0/15/30/45-min marks.
+Re-threads `sessionRef` (already returned by `useMetronomeEngine()`, just
+not previously passed to `MetronomeVisual`) so the ring reads elapsed/
+remaining time the same anti-drift way (a live ref read every rAF frame
+against real AudioContext time) as everything else in this file — never
+polled React state, never accumulated per-frame. **Deliberately does NOT
+reintroduce a numeral inside the eye** — the mm:ss countdown stays solely
+in `SessionTimer.tsx`, since putting text back at the eye's center would
+recreate a version of the exact clutter problem this redesign fixes.
+
+**The pendant's outer shape is now the actual medallion's silhouette**,
+not an icon sitting inside a generic circular badge. `MedallionIcon.tsx`
+draws an identical `r=47` circle behind every medallion — only the small
+inner glyph varies — so swapping medallions on the pendant used to never
+change its outer shape, just a tiny icon inside a dot. `MedallionGlyph`
+(the glyph-only renderer `MedallionIcon` wraps in that badge) is now
+exported and used directly by `Pendant`, wrapped in a positioning
+`<g transform="translate(cx,cy) scale(s) translate(-50,-50)">` — the
+standard "scale around a point" SVG composition — so the medallion's real
+hand-authored geometry (star, flame, crescent, the new orb shapes, etc.)
+becomes the pendant's actual silhouette, at `PENDANT_GLYPH_SCALE=0.65`
+(roughly 3x bigger than the old 13px charm, comparable to `TempoWeight`'s
+own shapes), with a separate generous invisible `PENDANT_HIT_RADIUS=28`
+circle for reliable tapping regardless of how sparse a glyph's strokes
+are. No badge circle, no `<foreignObject>` — same no-badge,
+drop-shadow-glow convention `TempoWeight`'s per-band shapes already
+established in this file. `MedallionPicker`/the dashboard grid are
+unchanged (still the badged `<MedallionIcon>`) — this redesign is scoped
+to the live pendant specifically.
+
+**The 5 band-orb medallions got real, distinct, vibe-relevant shapes** —
+math symbols and popular glyphs, per the builder's explicit ask — instead
+of the same generic "two overlapping circles" for every band, tinted only
+by color. `MedallionGlyph`'s `-orb` branch is now a per-band switch:
+delta=**hourglass** (stillness), theta=**spiral** (meditative, via a new
+`spiralPathD()` helper), alpha=**infinity** (flow, via a new
+`infinityPathD()` — a true lemniscate of Gerono, not an approximation),
+beta=**target/bullseye** (focus), gamma=**atom** (energy/peak clarity).
+Chosen to echo, without duplicating, `TempoWeight`'s existing per-band
+character (cloud/leaf/bagel/sparkle/bolt). The other 10 "milestone"
+medallions (spark/star/raindrop/crescent-moon/sun/lightbulb/leaf/
+snowflake/yin-yang/flame) were deliberately left untouched — investigated
+directly and found to already have real, distinct hand-authored glyphs
+and two clean unlock progressions (total-minutes: 30→60→180→300→600;
+streak-days: 3→7→14→30) — the band orbs were the only weak link, and the
+only medallions actually anchored to a specific vibe in the first place
+(milestones are cumulative across all bands, by design), so that's where
+this pass was scoped. Because every medallion's shape is drawn by this
+one shared `MedallionGlyph`, the improvement reaches everywhere a
+medallion already appears — the dashboard grid, the picker popover, and
+the fractal tree's "fruit" — automatically, not just the pendant.
+
 ## Status update — pendant medallion, volume-slider fix, accordion panel, chime + ambiance
 
 A review of a teammate's pushed gamification commit (`af5d7ee`) plus a

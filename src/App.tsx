@@ -66,6 +66,7 @@ export default function App() {
           bpm={engine.bpm}
           onSetBpm={engine.setBpm}
           sessionPhase={engine.sessionPhase}
+          sessionRef={engine.sessionRef}
           tickSubdivision={engine.tickSubdivision}
           selectedMedallionId={focusStats.selectedMedallionId}
           unlockedMedallionIds={focusStats.unlockedIds}

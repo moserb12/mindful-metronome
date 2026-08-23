@@ -40,6 +40,35 @@ function starPath(cx: number, cy: number, outerR: number, innerR: number, points
   return `${cmds.join(' ')} Z`;
 }
 
+/** Archimedean spiral, sampled into a polyline — used by theta's band orb
+ * (meditative, trance-like). */
+function spiralPathD(cx: number, cy: number, turns: number, maxR: number, steps = 60): string {
+  const pts: string[] = [];
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    const angle = t * turns * 2 * Math.PI;
+    const r = t * maxR;
+    const x = cx + r * Math.cos(angle);
+    const y = cy + r * Math.sin(angle);
+    pts.push(`${i === 0 ? 'M' : 'L'} ${x.toFixed(2)} ${y.toFixed(2)}`);
+  }
+  return pts.join(' ');
+}
+
+/** A true lemniscate of Gerono (figure-8 / "∞") — used by alpha's band
+ * orb, a literal math symbol for continuous flow. */
+function infinityPathD(cx: number, cy: number, scale: number, steps = 80): string {
+  const pts: string[] = [];
+  for (let i = 0; i <= steps; i++) {
+    const t = (i / steps) * 2 * Math.PI;
+    const denom = 1 + Math.sin(t) * Math.sin(t);
+    const x = cx + (scale * Math.cos(t)) / denom;
+    const y = cy + (scale * Math.sin(t) * Math.cos(t)) / denom;
+    pts.push(`${i === 0 ? 'M' : 'L'} ${x.toFixed(2)} ${y.toFixed(2)}`);
+  }
+  return `${pts.join(' ')} Z`;
+}
+
 const LOCKED_COLOR = '#5b6472';
 
 function SnowflakeArm({ deg, color }: { deg: number; color: string }) {
@@ -69,14 +98,58 @@ function SnowflakeArm({ deg, color }: { deg: number; color: string }) {
   );
 }
 
-function MedallionGlyph({ id, color }: { id: MedallionId; color: string }) {
+/**
+ * Every medallion's glyph, shared by MedallionIcon (the dashboard grid,
+ * the picker popover, and the fractal tree's fruit — all via the badged
+ * <MedallionIcon>) and, unbadged and scaled up, by the pendant on the
+ * pendulum's tip (Pendant in MetronomeVisual.tsx) — so a redesign here
+ * improves every one of those displays at once.
+ *
+ * The 5 band orbs get their own distinct, math-symbol/popular-glyph
+ * shape per band, echoing (without duplicating) the same per-band
+ * character TempoWeight's shapes already establish — delta=hourglass
+ * (stillness), theta=spiral (meditative), alpha=infinity (flow),
+ * beta=target (focus), gamma=atom (energy/clarity). They're also the
+ * ONLY medallions actually anchored to a specific vibe (the 10
+ * milestone glyphs below are cumulative across all bands by design),
+ * so they're the correct, narrowly-scoped target for vibe-relevant
+ * shapes — the 10 milestones already have real, distinct hand-authored
+ * glyphs and don't need redesigning.
+ */
+export function MedallionGlyph({ id, color }: { id: MedallionId; color: string }) {
   if (id.endsWith('-orb')) {
-    return (
-      <>
-        <circle cx={50} cy={50} r={27} fill={color} />
-        <circle cx={41} cy={41} r={9} fill="#ffffff" opacity={0.28} />
-      </>
-    );
+    switch (id) {
+      case 'delta-orb': // Hourglass — stillness, deep rest
+        return (
+          <>
+            <path d="M28 20 L72 20 L50 50 Z M28 80 L72 80 L50 50 Z" fill={color} />
+            <line x1={24} y1={20} x2={76} y2={20} stroke={color} strokeWidth={4} strokeLinecap="round" />
+            <line x1={24} y1={80} x2={76} y2={80} stroke={color} strokeWidth={4} strokeLinecap="round" />
+          </>
+        );
+      case 'theta-orb': // Spiral — meditative, trance-like
+        return <path d={spiralPathD(50, 50, 2.25, 30)} fill="none" stroke={color} strokeWidth={3} strokeLinecap="round" />;
+      case 'alpha-orb': // Infinity — continuous flow
+        return <path d={infinityPathD(50, 50, 30)} fill="none" stroke={color} strokeWidth={6} strokeLinecap="round" />;
+      case 'beta-orb': // Target — focus
+        return (
+          <>
+            <circle cx={50} cy={50} r={30} fill="none" stroke={color} strokeWidth={4} />
+            <circle cx={50} cy={50} r={19} fill="none" stroke={color} strokeWidth={4} />
+            <circle cx={50} cy={50} r={8} fill={color} />
+          </>
+        );
+      case 'gamma-orb': // Atom — energy, peak clarity
+      default:
+        return (
+          <>
+            <circle cx={50} cy={50} r={7} fill={color} />
+            <ellipse cx={50} cy={50} rx={30} ry={12} fill="none" stroke={color} strokeWidth={3} />
+            <ellipse cx={50} cy={50} rx={30} ry={12} fill="none" stroke={color} strokeWidth={3} transform="rotate(60 50 50)" />
+            <ellipse cx={50} cy={50} rx={30} ry={12} fill="none" stroke={color} strokeWidth={3} transform="rotate(120 50 50)" />
+          </>
+        );
+    }
   }
 
   switch (id) {
