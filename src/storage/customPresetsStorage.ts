@@ -6,15 +6,16 @@
 // ever added, can't accidentally wipe out saved presets).
 // ============================================================================
 
-import type { NoiseType, TickEarMode, TickSound } from '../audio/binauralEngine';
+import type { ChimeInterval, NoiseType, TickEarMode, TickSound } from '../audio/binauralEngine';
 import { MAX_BEAT_HZ, MAX_BPM, MAX_CARRIER_HZ, MIN_BEAT_HZ, MIN_BPM, MIN_CARRIER_HZ } from '../data/bands';
 import type { CustomPreset } from '../data/customPresets';
 
 const STORAGE_KEY = 'mindful-metronome:custom-presets:v1';
 
 const TICK_SOUNDS: TickSound[] = ['soft', 'wood', 'kick', 'hihat'];
-const NOISE_TYPES: NoiseType[] = ['pink', 'white', 'brown'];
+const NOISE_TYPES: NoiseType[] = ['pink', 'white', 'brown', 'rainyForest', 'tinRoof', 'drippyCavern'];
 const TICK_EAR_MODES: TickEarMode[] = ['MATCH', 'OPPOSITE', 'BOTH'];
+const CHIME_INTERVALS: ChimeInterval[] = [15, 30, 45, 60, null];
 
 function isUnitVolume(v: unknown): boolean {
   return typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 1;
@@ -51,6 +52,7 @@ function isValidCustomPreset(v: unknown): v is CustomPreset {
     isUnitVolume(p.panModulationDepth) &&
     typeof p.tickEarMode === 'string' &&
     TICK_EAR_MODES.includes(p.tickEarMode as TickEarMode) &&
+    CHIME_INTERVALS.includes(p.chimeInterval as ChimeInterval) &&
     typeof p.createdAt === 'number'
   );
 }

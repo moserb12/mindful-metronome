@@ -185,13 +185,13 @@ const WEIGHT_MAX_OFFSET = ARM_LENGTH - 30;
 interface TempoWeightProps {
   bpm: number;
   onSetBpm: (bpm: number) => void;
-  medallionId: MedallionId;
-  onTap: () => void;
+  band: BrainwaveBand;
 }
 
-/** A pointer has to move less than this many CSS pixels between down and up
- * to count as a "tap" (opens the medallion picker) rather than the start of
- * a drag (changes tempo) — see handlePointerDown below. */
+/** A pointer has to move more than this many CSS pixels before a drag
+ * actually starts nudging BPM — otherwise a plain click-without-drag on
+ * the weight (no drag intended at all) still nudges tempo by a pixel or
+ * two of unavoidable pointer jitter. */
 const TAP_MOVE_THRESHOLD_PX = 5;
 
 /** Builds the "outer minus hole" compound path for the bagel body — two
@@ -224,48 +224,127 @@ const BAGEL_HOLE_RX = 6.5;
 const BAGEL_HOLE_RY = 4;
 const BAGEL_COLOR = '#c9924f';
 const MEDALLION_CHARM_SIZE = 13;
+/** Uniform invisible hit-target radius shared by all 5 weight shapes —
+ * roughly the bagel's own equivalent-area radius, so every shape gets a
+ * comparably generous grab area regardless of how thin its silhouette is
+ * (the star's points and the bolt's zigzag are visually much narrower than
+ * this circle). */
+const WEIGHT_HIT_RADIUS = 14;
+
+/** Builds the 8-vertex outline for the beta/"happy" weight's 4-point
+ * sparkle, alternating between outerR and innerR every 45°. */
+function sparklePathD(cx: number, cy: number, outerR: number, innerR: number): string {
+  const points: string[] = [];
+  for (let i = 0; i < 8; i++) {
+    const r = i % 2 === 0 ? outerR : innerR;
+    const angle = (Math.PI / 4) * i - Math.PI / 2;
+    points.push(`${cx + r * Math.cos(angle)} ${cy + r * Math.sin(angle)}`);
+  }
+  return `M ${points[0]} L ${points.slice(1).join(' L ')} Z`;
+}
+
+/** Renders the weight's visible body, keyed on the active brainwave band —
+ * each band gets its own silhouette so the weight itself carries the
+ * current mood, not just the pendulum's tint. Alpha keeps the original
+ * bagel (evenodd hole + glaze + seeds); the other four are simple solid
+ * shapes filled with the band's own identity color. */
+function renderWeightShape(band: BrainwaveBand, cx: number, cy: number, color: string) {
+  switch (band) {
+    case 'delta':
+      // Cloud — three overlapping circles + a flattened base ellipse, one
+      // solid silhouette. Soft and pillowy, no hard edges.
+      return (
+        <g className="tempo-weight-body" fill={color}>
+          <ellipse cx={cx} cy={cy + 3} rx={15} ry={7} />
+          <circle cx={cx - 8} cy={cy - 3} r={7} />
+          <circle cx={cx} cy={cy - 5} r={8} />
+          <circle cx={cx + 8} cy={cy - 3} r={7} />
+        </g>
+      );
+    case 'theta':
+      // Leaf — a pointed teardrop with a thin center vein.
+      return (
+        <g className="tempo-weight-body">
+          <path
+            fill={color}
+            d={`M ${cx} ${cy - 15} C ${cx + 12} ${cy - 10} ${cx + 10} ${cy + 9} ${cx} ${cy + 16} C ${cx - 10} ${cy + 9} ${cx - 12} ${cy - 10} ${cx} ${cy - 15} Z`}
+          />
+          <line className="tempo-weight-vein" x1={cx} y1={cy - 11} x2={cx} y2={cy + 12} aria-hidden="true" />
+        </g>
+      );
+    case 'beta':
+      // Sparkle — bright, "twinkle."
+      return <path className="tempo-weight-body" fill={color} d={sparklePathD(cx, cy, 15, 5)} />;
+    case 'gamma':
+      // Lightning bolt — angular, kinetic.
+      return (
+        <path
+          className="tempo-weight-body"
+          fill={color}
+          d={`M ${cx + 3} ${cy - 16} L ${cx - 6} ${cy - 2} L ${cx + 1} ${cy - 2} L ${cx - 4} ${cy + 16} L ${cx + 7} ${cy} L ${cx} ${cy} Z`}
+        />
+      );
+    case 'alpha':
+    default:
+      // Bagel — the original shape, unchanged. This IS the default/most-
+      // traveled path, so it's kept exactly as it was.
+      return (
+        <>
+          <path
+            className="tempo-weight-body"
+            fillRule="evenodd"
+            d={`${ellipseSubpath(cx, cy, BAGEL_RX, BAGEL_RY)} ${ellipseSubpath(cx, cy, BAGEL_HOLE_RX, BAGEL_HOLE_RY)}`}
+            fill={BAGEL_COLOR}
+          />
+          <ellipse cx={cx} cy={cy - BAGEL_RY * 0.45} rx={BAGEL_RX * 0.68} ry={BAGEL_RY * 0.32} className="tempo-weight-glaze" />
+          {BAGEL_SEEDS.map(([dx, dy], i) => (
+            <ellipse key={i} cx={cx + dx} cy={cy + dy} rx={1.1} ry={0.65} className="tempo-weight-seed" />
+          ))}
+        </>
+      );
+  }
+}
 
 /**
  * The weight on the pendulum rod — dragging it slides it along the rod
  * exactly like a real mechanical metronome (toward the pivot for a faster
- * tempo, toward the tip for slower), and it's shaped like a bagel: a nice
- * practical fit, since a bagel already HAS a hole to mount a medallion
- * charm in. A quick tap (as opposed to a drag) opens the medallion picker
- * instead of touching tempo — see TAP_MOVE_THRESHOLD_PX below for how
- * those two gestures are told apart from the same onPointerDown handler.
+ * tempo, toward the tip for slower). Its shape carries the current
+ * brainwave band's mood (see renderWeightShape) — alpha keeps the
+ * original bagel, the other four bands get their own silhouette. Purely
+ * a drag handle now: the medallion charm and tap-to-open-picker gesture
+ * live on the Pendant component at the arm's tip instead (see Pendant
+ * below) — a listener changes their medallion by tapping the charm at the
+ * very end of the pendulum, not by touching the weight partway up the rod.
  *
- * Rendered as a child of the arm's rotating <g>, so both the bagel and its
- * medallion swing with the pendulum for free (SVG nested transforms
- * compose) — no extra per-frame code needed. Deliberately positioned on
- * the rod's STRAIGHT center axis, ignoring the snake-wave offset applied
- * to the rod's own rendering (see the rAF loop below) — the weight is a
- * rigid physical slider, not part of the thin rod's own resonance, so it
- * stays put regardless of how wavy the string looks around it.
+ * Rendered as a child of the arm's rotating <g>, so it swings with the
+ * pendulum for free (SVG nested transforms compose) — no extra per-frame
+ * code needed. Deliberately positioned on the rod's STRAIGHT center axis,
+ * ignoring the snake-wave offset applied to the rod's own rendering (see
+ * the rAF loop below) — the weight is a rigid physical slider, not part
+ * of the thin rod's own resonance, so it stays put regardless of how wavy
+ * the string looks around it.
  */
-function TempoWeight({ bpm, onSetBpm, medallionId, onTap }: TempoWeightProps) {
-  const dragState = useRef<{ startClientX: number; startClientY: number; startBpm: number; moved: boolean } | null>(null);
+function TempoWeight({ bpm, onSetBpm, band }: TempoWeightProps) {
+  const dragState = useRef<{ startClientX: number; startClientY: number; startBpm: number } | null>(null);
 
   const t = (bpm - MIN_BPM) / (MAX_BPM - MIN_BPM);
   const offset = WEIGHT_MAX_OFFSET - t * (WEIGHT_MAX_OFFSET - WEIGHT_MIN_OFFSET);
   const weightY = PIVOT.y + offset;
+  const bandInfo = BANDS[band];
 
   function handlePointerDown(e: React.PointerEvent) {
     e.stopPropagation();
-    dragState.current = { startClientX: e.clientX, startClientY: e.clientY, startBpm: bpm, moved: false };
+    dragState.current = { startClientX: e.clientX, startClientY: e.clientY, startBpm: bpm };
 
     function handleMove(ev: PointerEvent) {
       if (!dragState.current) return;
-      const deltaY = dragState.current.startClientY - ev.clientY; // up = positive
       const totalMove = Math.hypot(ev.clientX - dragState.current.startClientX, ev.clientY - dragState.current.startClientY);
-      if (totalMove > TAP_MOVE_THRESHOLD_PX) dragState.current.moved = true;
+      if (totalMove <= TAP_MOVE_THRESHOLD_PX) return;
+      const deltaY = dragState.current.startClientY - ev.clientY; // up = positive
       const nextBpm = Math.round(dragState.current.startBpm + deltaY * DRAG_SENSITIVITY);
       onSetBpm(Math.min(MAX_BPM, Math.max(MIN_BPM, nextBpm)));
     }
     function handleUp() {
-      // Only treat this as a tap-to-open-picker if the pointer never moved
-      // past the threshold — otherwise every drag would also toggle the
-      // picker open the instant it's released.
-      if (dragState.current && !dragState.current.moved) onTap();
       dragState.current = null;
       window.removeEventListener('pointermove', handleMove);
       window.removeEventListener('pointerup', handleUp);
@@ -275,53 +354,57 @@ function TempoWeight({ bpm, onSetBpm, medallionId, onTap }: TempoWeightProps) {
   }
 
   return (
+    <g className="tempo-weight" onPointerDown={handlePointerDown} style={{ cursor: 'grab' }}>
+      <circle cx={PIVOT.x} cy={weightY} r={WEIGHT_HIT_RADIUS} className="tempo-weight-hit-target" />
+      {renderWeightShape(band, PIVOT.x, weightY, bandInfo.color)}
+    </g>
+  );
+}
+
+interface PendantProps {
+  medallionId: MedallionId;
+  onTap: () => void;
+  pendantRef: React.Ref<SVGGElement>;
+}
+
+/**
+ * The charm at the very end of the pendulum arm — tapping it opens the
+ * medallion picker. This is the "pendant": a pure click target with no
+ * drag concern (unlike the weight above it on the rod), so it follows the
+ * same onClick/onKeyDown convention as the eye and pyramid elsewhere in
+ * this file (handlePyramidTap/handleEyeTap) rather than TempoWeight's
+ * pointer-drag handling.
+ */
+function Pendant({ medallionId, onTap, pendantRef }: PendantProps) {
+  const tipY = PIVOT.y + ARM_LENGTH;
+  return (
     <g
-      className="tempo-weight"
-      onPointerDown={handlePointerDown}
-      style={{ cursor: 'grab' }}
+      ref={pendantRef}
+      className="metronome-pendant"
       role="button"
       tabIndex={0}
-      aria-label="Metronome weight — drag to change tempo, or tap to change medallion"
+      aria-label="Pendulum pendant — tap to change medallion"
+      onClick={onTap}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
+          // Without this, the SAME keypress also bubbles to the global
+          // Space handler in useKeyboardShortcuts.ts (guarded only by
+          // isEditableOrControlFocused(), which an SVG <g role="button">
+          // doesn't satisfy) and toggles play/pause at the same time the
+          // picker opens/closes.
+          e.stopPropagation();
           onTap();
         }
       }}
     >
-      {/* A transparent-but-PAINTED (not `fill: none`) full-oval hit target,
-          separate from the visible bagel body below. The bagel body is an
-          evenodd path with a genuinely carved-out hole (see
-          ellipseSubpath()) — `pointer-events: all` on that path still
-          respects the fill-rule's actual geometry, so the hole itself
-          would stay a dead zone even with `all` set. Since the medallion
-          charm sits exactly in that hole, it's the single most likely spot
-          someone taps — this ellipse covers the whole outer oval, hole
-          included, so a tap anywhere on the bagel (charm included)
-          registers. */}
-      <ellipse cx={PIVOT.x} cy={weightY} rx={BAGEL_RX} ry={BAGEL_RY} className="tempo-weight-hit-target" />
-      <path
-        className="tempo-weight-body"
-        fillRule="evenodd"
-        d={`${ellipseSubpath(PIVOT.x, weightY, BAGEL_RX, BAGEL_RY)} ${ellipseSubpath(PIVOT.x, weightY, BAGEL_HOLE_RX, BAGEL_HOLE_RY)}`}
-        fill={BAGEL_COLOR}
-      />
-      <ellipse
-        cx={PIVOT.x}
-        cy={weightY - BAGEL_RY * 0.45}
-        rx={BAGEL_RX * 0.68}
-        ry={BAGEL_RY * 0.32}
-        className="tempo-weight-glaze"
-      />
-      {BAGEL_SEEDS.map(([dx, dy], i) => (
-        <ellipse key={i} cx={PIVOT.x + dx} cy={weightY + dy} rx={1.1} ry={0.65} className="tempo-weight-seed" />
-      ))}
+      <circle cx={PIVOT.x} cy={tipY} r={7} className="metronome-arm-tip" />
       <foreignObject
         x={PIVOT.x - MEDALLION_CHARM_SIZE / 2}
-        y={weightY - MEDALLION_CHARM_SIZE / 2}
+        y={tipY - MEDALLION_CHARM_SIZE / 2}
         width={MEDALLION_CHARM_SIZE}
         height={MEDALLION_CHARM_SIZE}
-        className="tempo-weight-charm"
+        className="pendant-charm"
       >
         <MedallionIcon id={medallionId} size={MEDALLION_CHARM_SIZE} />
       </foreignObject>
@@ -346,7 +429,7 @@ interface MetronomeVisualProps {
    * `tickSubdivisionRef` comment in the rAF loop below for why this is
    * read via a ref rather than a plain closed-over prop. */
   tickSubdivision: TickSubdivision;
-  /** Which medallion currently sits in the bagel weight's hole. */
+  /** Which medallion currently hangs from the pendant at the arm's tip. */
   selectedMedallionId: MedallionId;
   /** Every medallion the listener has actually earned — see
    * engine/growth.ts's computeUnlockedMedallions(). The picker only ever
@@ -433,16 +516,25 @@ export function MetronomeVisual({
   }
 
   // The medallion picker is plain HTML rendered BELOW the SVG, not inside
-  // it — the weight itself lives inside the arm's rotating <g>, and a
+  // it — the pendant itself lives inside the arm's rotating <g>, and a
   // picker popover that rotated with the pendulum mid-swing would be
-  // unusable. Tapping the weight (see TempoWeight's onTap) just flips this
+  // unusable. Tapping the pendant (see Pendant's onTap) just flips this
   // boolean; the popover's own position is fixed relative to the visual,
-  // independent of wherever the bagel currently is on its swing.
+  // independent of wherever the pendulum currently is on its swing.
   const [medallionPickerOpen, setMedallionPickerOpen] = useState(false);
+  const pendantRef = useRef<SVGGElement | null>(null);
+
+  /** Restores focus to the pendant on close, mirroring the picker's own
+   * focus-in-on-open (see MedallionPicker.tsx) — without this, closing via
+   * Escape or a selection drops focus to the document body. */
+  function closeMedallionPicker() {
+    setMedallionPickerOpen(false);
+    pendantRef.current?.focus();
+  }
 
   function handleSelectMedallion(id: MedallionId) {
     onSelectMedallion(id);
-    setMedallionPickerOpen(false);
+    closeMedallionPicker();
   }
 
   useEffect(() => {
@@ -924,12 +1016,11 @@ export function MetronomeVisual({
 
         <g ref={armRef} className="metronome-arm">
           <path ref={armPathRef} className="metronome-arm-line" d={`M ${PIVOT.x} ${PIVOT.y} L ${PIVOT.x} ${PIVOT.y + ARM_LENGTH}`} />
-          <circle cx={PIVOT.x} cy={PIVOT.y + ARM_LENGTH} r={7} className="metronome-arm-tip" />
-          <TempoWeight
-            bpm={bpm}
-            onSetBpm={onSetBpm}
+          <TempoWeight bpm={bpm} onSetBpm={onSetBpm} band={band} />
+          <Pendant
             medallionId={selectedMedallionId}
             onTap={() => setMedallionPickerOpen((open) => !open)}
+            pendantRef={pendantRef}
           />
         </g>
 
@@ -956,13 +1047,13 @@ export function MetronomeVisual({
           <circle ref={pupilRef} cx={EYE.x} cy={EYE.y} r={9} className="eye-pupil" />
         </g>
       </svg>
-      <p className="tempo-weight-hint">Drag the bagel to change tempo, tap it to swap medallions — {bpm} BPM</p>
+      <p className="tempo-weight-hint">Drag the weight to change tempo, tap the pendant to swap medallions — {bpm} BPM</p>
       {medallionPickerOpen && (
         <MedallionPicker
           unlockedIds={unlockedMedallionIds}
           selectedId={selectedMedallionId}
           onSelect={handleSelectMedallion}
-          onClose={() => setMedallionPickerOpen(false)}
+          onClose={closeMedallionPicker}
         />
       )}
     </div>

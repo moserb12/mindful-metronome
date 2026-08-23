@@ -312,14 +312,14 @@ select:hover {
 .tempo-weight {
   cursor: grab;
   touch-action: none;
-  /* The bagel body is a compound evenodd path with a genuine unpainted
+  /* Alpha's bagel body is a compound evenodd path with a genuine unpainted
      hole cut into its middle (see ellipseSubpath() in
-     MetronomeVisual.tsx) — exactly where the medallion charm sits. With
-     the default `pointer-events: visiblePainted`, a tap landing in that
-     hole (i.e. right on the medallion itself, the single most likely spot
-     someone taps) would hit nothing and silently miss. `all` makes the
-     entire bagel — hole included — a real, reliable tap target regardless
-     of what's actually painted there. */
+     MetronomeVisual.tsx). With the default `pointer-events:
+     visiblePainted`, a drag starting inside that hole would hit nothing
+     and silently miss. `all` makes the entire weight — hole included —
+     a real, reliable drag target regardless of what's actually painted
+     there; the other 4 bands' shapes have no hole but keep the same rule
+     for consistency. */
   pointer-events: all;
 }
 .tempo-weight:active {
@@ -355,19 +355,34 @@ select:hover {
   fill: rgba(255, 248, 228, 0.85);
   pointer-events: none;
 }
-/* The medallion charm sits in a <foreignObject> nested in the same
-   rotating <g> as the bagel — pointer-events disabled so a click right
-   over the charm still hits the bagel's own onPointerDown (tap opens the
-   picker) instead of being swallowed by the icon's inner <svg>. */
-.tempo-weight-charm {
+/* Theta's leaf gets a thin center vein — the only per-shape decoration
+   beyond a flat fill. */
+.tempo-weight-vein {
+  stroke: rgba(0, 0, 0, 0.25);
+  stroke-width: 1;
   pointer-events: none;
-  overflow: visible;
 }
 .tempo-weight-hint {
   text-align: center;
   margin: 10px 0 0;
   font-size: 0.76rem;
   color: var(--text-faint);
+}
+
+.metronome-pendant {
+  cursor: pointer;
+}
+.metronome-pendant:hover .metronome-arm-tip,
+.metronome-pendant:focus-visible .metronome-arm-tip {
+  filter: drop-shadow(0 0 12px var(--band-glow, rgba(167, 139, 250, 0.8)));
+}
+/* The medallion charm sits in a <foreignObject> nested inside the
+   pendant's own <g> — pointer-events disabled so a click right over the
+   charm still hits the pendant's onClick (tap opens the picker) instead
+   of being swallowed by the icon's inner <svg>. */
+.pendant-charm {
+  pointer-events: none;
+  overflow: visible;
 }
 
 .eye-outer {
@@ -694,6 +709,66 @@ select:hover {
   font-size: 0.76rem;
   line-height: 1.5;
   color: var(--text-faint);
+}
+
+/* Expandable sections (Part E) — a native <details>/<summary> pair for
+   each fully-collapsible group, styled to match .control-group's own
+   look so the panel's spacing rhythm doesn't shift between an always-open
+   group and a collapsible one. */
+.control-group-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  list-style: none;
+}
+.control-group-summary::-webkit-details-marker {
+  display: none;
+}
+.control-group-summary:hover .control-label {
+  color: var(--text-muted);
+}
+.control-group-chevron {
+  color: var(--text-faint);
+  font-size: 0.7rem;
+  transition: transform var(--dur-base) var(--ease-soft);
+}
+details[open] > .control-group-summary .control-group-chevron,
+.control-group-chevron-open {
+  transform: rotate(90deg);
+}
+.control-group-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 10px;
+}
+/* The Volume Mixer's "Open mixer" toggle — Master needs to render OUTSIDE
+   any collapsible wrapper (a <details>/<summary> pair can't split its
+   content that way), so this is a plain button styled to match the
+   <details> groups' chevron affordance rather than reusing <summary>. */
+.mixer-expand-toggle {
+  align-self: flex-start;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--surface-border);
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  transition: border-color var(--dur-base) var(--ease-soft), color var(--dur-base) var(--ease-soft);
+}
+.mixer-expand-toggle:hover {
+  color: var(--text);
+}
+.mixer-expand-content {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .preset-row {
@@ -1224,7 +1299,7 @@ select:hover {
    Focus dashboard, medallions & the fractal tree — the gamification layer:
    daily "watering" streaks, per-band duration stats, a fractal tree that
    grows with total practice time and bears medallion "fruit," and the
-   medallion picker popover opened by tapping the bagel weight. Reuses the
+   medallion picker popover opened by tapping the pendant. Reuses the
    SAME cards/labels/hint styling and motion tokens as .control-panel
    rather than inventing a second visual language for the new features.
    ============================================================================ */
@@ -1360,6 +1435,7 @@ select:hover {
 .fractal-tree {
   width: min(100%, 220px);
   aspect-ratio: 1;
+  filter: drop-shadow(0 0 10px var(--tree-glow, transparent));
 }
 .fractal-tree-ground-shadow {
   fill: rgba(0, 0, 0, 0.28);
@@ -1498,7 +1574,7 @@ select:hover {
   color: var(--text-faint);
 }
 
-/* ---------- Medallion picker popover (opened from the bagel weight) ---------- */
+/* ---------- Medallion picker popover (opened from the pendant) ---------- */
 
 .medallion-picker {
   position: absolute;

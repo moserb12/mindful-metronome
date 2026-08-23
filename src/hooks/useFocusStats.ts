@@ -36,6 +36,8 @@ export function useFocusStats(isPlaying: boolean, band: BrainwaveBand) {
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const statsRef = useRef(stats);
   statsRef.current = stats;
+  const bandRef = useRef(band);
+  bandRef.current = band;
 
   // Accumulate REAL elapsed wall-clock time (not a fixed "1 tick = 1
   // second" assumption) into the currently active band's total and today's
@@ -51,14 +53,15 @@ export function useFocusStats(isPlaying: boolean, band: BrainwaveBand) {
       lastTickRef.current = null;
       return;
     }
-    lastTickRef.current = Date.now();
+    lastTickRef.current = performance.now();
     const interval = setInterval(() => {
-      const now = Date.now();
+      const now = performance.now();
       const prev = lastTickRef.current ?? now;
       const deltaSec = Math.max(0, (now - prev) / 1000);
       lastTickRef.current = now;
       if (deltaSec <= 0) return;
 
+      const band = bandRef.current;
       setStats((current) => {
         const todayKey = dateKeyFor(new Date());
         return {
@@ -79,7 +82,7 @@ export function useFocusStats(isPlaying: boolean, band: BrainwaveBand) {
       clearInterval(interval);
       lastTickRef.current = null;
     };
-  }, [isPlaying, band]);
+  }, [isPlaying]);
 
   // Debounced save, mirroring useMetronomeEngine's settings-save effect.
   useEffect(() => {

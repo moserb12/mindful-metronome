@@ -14,6 +14,7 @@ const VALID: PersistedSettings = {
   panModulationDepth: 0.4,
   tickEarMode: 'OPPOSITE',
   tickSubdivision: 'ENDS_AND_CENTER',
+  chimeInterval: 30,
   hapticsEnabled: true,
   lastSelectedSessionDurationMinutes: 20,
 };

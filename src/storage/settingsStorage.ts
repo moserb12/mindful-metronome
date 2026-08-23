@@ -12,7 +12,7 @@
 // scalar, and shouldn't be touched by anything that manipulates this blob.
 // ============================================================================
 
-import type { NoiseType, TickEarMode, TickSound, TickSubdivision } from '../audio/binauralEngine';
+import type { ChimeInterval, NoiseType, TickEarMode, TickSound, TickSubdivision } from '../audio/binauralEngine';
 import { MAX_BEAT_HZ, MAX_BPM, MAX_CARRIER_HZ, MIN_BEAT_HZ, MIN_BPM, MIN_CARRIER_HZ } from '../data/bands';
 
 const STORAGE_KEY = 'mindful-metronome:settings:v1';
@@ -30,6 +30,7 @@ export interface PersistedSettings {
   panModulationDepth: number;
   tickEarMode: TickEarMode;
   tickSubdivision: TickSubdivision;
+  chimeInterval: ChimeInterval;
   hapticsEnabled: boolean;
   /** The last duration picked in the Practice section's session timer —
    * `null` means Open-ended (no auto-fade). Only the PREFERENCE persists,
@@ -40,9 +41,10 @@ export interface PersistedSettings {
 }
 
 const TICK_SOUNDS: TickSound[] = ['soft', 'wood', 'kick', 'hihat'];
-const NOISE_TYPES: NoiseType[] = ['pink', 'white', 'brown'];
+const NOISE_TYPES: NoiseType[] = ['pink', 'white', 'brown', 'rainyForest', 'tinRoof', 'drippyCavern'];
 const TICK_EAR_MODES: TickEarMode[] = ['MATCH', 'OPPOSITE', 'BOTH'];
 const TICK_SUBDIVISIONS: TickSubdivision[] = ['ENDS', 'ENDS_AND_CENTER', 'CENTER'];
+const CHIME_INTERVALS: ChimeInterval[] = [15, 30, 45, 60, null];
 
 function isUnitVolume(v: unknown): v is number {
   return typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 1;
@@ -63,6 +65,7 @@ const FIELD_VALIDATORS: { [K in keyof PersistedSettings]: (v: unknown) => boolea
   panModulationDepth: isUnitVolume,
   tickEarMode: (v) => typeof v === 'string' && TICK_EAR_MODES.includes(v as TickEarMode),
   tickSubdivision: (v) => typeof v === 'string' && TICK_SUBDIVISIONS.includes(v as TickSubdivision),
+  chimeInterval: (v) => CHIME_INTERVALS.includes(v as ChimeInterval),
   hapticsEnabled: (v) => typeof v === 'boolean',
   lastSelectedSessionDurationMinutes: (v) => v === null || (typeof v === 'number' && Number.isFinite(v) && v > 0),
 };

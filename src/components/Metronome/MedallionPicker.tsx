@@ -10,15 +10,20 @@ interface MedallionPickerProps {
 }
 
 /**
- * A small popover opened by tapping the bagel weight — lets a listener
- * swap which unlocked medallion sits in the middle of it without leaving
- * the metronome. Deliberately only lists what's ALREADY unlocked (the full
- * collection, including locked ones and their unlock requirements, lives
- * in the Focus Garden dashboard below) — this is a quick swap tool, not a
- * second copy of the whole collection screen.
+ * A small popover opened by tapping the pendant at the end of the
+ * pendulum — lets a listener swap which unlocked medallion hangs there
+ * without leaving the metronome. Deliberately only lists what's ALREADY
+ * unlocked (the full collection, including locked ones and their unlock
+ * requirements, lives in the Focus Garden dashboard below) — this is a
+ * quick swap tool, not a second copy of the whole collection screen.
  */
 export function MedallionPicker({ unlockedIds, selectedId, onSelect, onClose }: MedallionPickerProps) {
   const panelRef = useRef<HTMLDivElement | null>(null);
+  const firstItemRef = useRef<HTMLButtonElement | null>(null);
+
+  useEffect(() => {
+    firstItemRef.current?.focus();
+  }, []);
 
   useEffect(() => {
     function handlePointerDown(e: PointerEvent) {
@@ -36,7 +41,7 @@ export function MedallionPicker({ unlockedIds, selectedId, onSelect, onClose }: 
   }, [onClose]);
 
   return (
-    <div className="medallion-picker" ref={panelRef} role="dialog" aria-label="Choose a medallion">
+    <div className="medallion-picker" ref={panelRef} role="dialog" aria-modal="true" aria-label="Choose a medallion">
       <div className="medallion-picker-header">
         <span>Choose a medallion</span>
         <button type="button" className="medallion-picker-close" onClick={onClose} aria-label="Close">
@@ -44,9 +49,10 @@ export function MedallionPicker({ unlockedIds, selectedId, onSelect, onClose }: 
         </button>
       </div>
       <div className="medallion-picker-row">
-        {unlockedIds.map((id) => (
+        {unlockedIds.map((id, i) => (
           <button
             key={id}
+            ref={i === 0 ? firstItemRef : undefined}
             type="button"
             className={`medallion-picker-item ${id === selectedId ? 'selected' : ''}`}
             onClick={() => onSelect(id)}

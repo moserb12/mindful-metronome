@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { BeatScheduler } from '../engine/timing';
-import { BinauralEngine, type NoiseType, type TickEarMode, type TickSound, type TickSubdivision } from '../audio/binauralEngine';
+import {
+  BinauralEngine,
+  type ChimeInterval,
+  type NoiseType,
+  type TickEarMode,
+  type TickSound,
+  type TickSubdivision,
+} from '../audio/binauralEngine';
 import { classifyBeatFrequency, DEFAULT_PRESET, MAX_BPM, MIN_BPM } from '../data/bands';
 import { MOOD_BY_BAND } from '../data/moods';
 import { clamp } from '../engine/motion';
@@ -77,6 +84,7 @@ function resolveInitialSettings() {
     panModulationDepth: stored.panModulationDepth ?? 0.6,
     tickEarMode: stored.tickEarMode ?? ('MATCH' as TickEarMode),
     tickSubdivision: stored.tickSubdivision ?? ('ENDS' as TickSubdivision),
+    chimeInterval: stored.chimeInterval ?? (null as ChimeInterval),
     // Default ON wherever the Vibration API actually exists (desktop
     // browsers don't have it at all, so this is moot there) — haptics are
     // opt-OUT, not opt-in, matching how every other feedback channel in
@@ -149,6 +157,7 @@ export interface ApplyablePresetFields {
   panModulationDepth?: number;
   tickEarMode?: TickEarMode;
   tickSubdivision?: TickSubdivision;
+  chimeInterval?: ChimeInterval;
 }
 
 export interface SwingSegment {
@@ -240,6 +249,7 @@ export function useMetronomeEngine() {
   const [panModulationDepth, setPanModulationDepthState] = useState(initialSettings.panModulationDepth); // 80/20 <-> 20/80 at the extremes, by default
   const [tickEarMode, setTickEarModeState] = useState<TickEarMode>(initialSettings.tickEarMode);
   const [tickSubdivision, setTickSubdivisionState] = useState<TickSubdivision>(initialSettings.tickSubdivision);
+  const [chimeInterval, setChimeIntervalState] = useState<ChimeInterval>(initialSettings.chimeInterval);
   const [hapticsEnabled, setHapticsEnabledState] = useState(initialSettings.hapticsEnabled);
   const [sessionDurationMinutes, setSessionDurationMinutesState] = useState<number | null>(
     initialSettings.lastSelectedSessionDurationMinutes
@@ -278,6 +288,7 @@ export function useMetronomeEngine() {
     panModulationDepth,
     tickEarMode,
     tickSubdivision,
+    chimeInterval,
     hapticsEnabled,
   });
   // Two independent timeouts (rather than the old single wiggleTimeoutRef,
@@ -288,6 +299,16 @@ export function useMetronomeEngine() {
   // independently without one canceling the other.
   const endTickTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const centerTickTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** AudioContext time this playthrough's very first beat sounds — seeded
+   * in start() (see firstBeatAtSec there), the fixed reference elapsed
+   * PLAY time is measured against for the interval chime. `null` while
+   * not playing. */
+  const playStartTimeSecRef = useRef<number | null>(null);
+  /** Which chime mark (1, 2, 3...) is next due — reset to 1 on every
+   * Pause/Stop (both manual, via stopPlaybackInternal, and a natural
+   * session end, which also calls it) so the escalation always restarts
+   * from a single ring rather than continuing to climb across sessions. */
+  const nextChimeMarkRef = useRef(1);
 
   paramsRef.current = {
     carrierHz,
@@ -302,6 +323,7 @@ export function useMetronomeEngine() {
     panModulationDepth,
     tickEarMode,
     tickSubdivision,
+    chimeInterval,
     hapticsEnabled,
   };
 
@@ -382,6 +404,23 @@ export function useMetronomeEngine() {
       beat.timeSec + secondsPerBeat
     );
 
+    // Interval chime — mirrors scheduleDroneSwing's precedent exactly:
+    // pre-scheduled from the same reliably-background-safe trigger, never
+    // a poll or requestAnimationFrame. Elapsed PLAY time is measured
+    // against playStartTimeSecRef (seeded once in start()), so a mid-play
+    // BPM change never distorts which minute mark is "next" the way
+    // counting elapsed BEATS would. Up to one beat's lateness on a
+    // 15-60 minute marker is fine — no need for finer precision.
+    const chimeInterval = paramsRef.current.chimeInterval;
+    if (chimeInterval && playStartTimeSecRef.current !== null) {
+      const elapsedSec = beat.timeSec - playStartTimeSecRef.current;
+      const markSec = nextChimeMarkRef.current * chimeInterval * 60;
+      if (elapsedSec >= markSec) {
+        engine.playIntervalChime(beat.timeSec, nextChimeMarkRef.current);
+        nextChimeMarkRef.current += 1;
+      }
+    }
+
     // Flip the wiggle/React-state trigger at the moment each tick actually
     // SOUNDS, not when it was merely scheduled (which is ~100ms early) —
     // a few ms of setTimeout jitter is invisible on a cosmetic wiggle, and
@@ -436,6 +475,8 @@ export function useMetronomeEngine() {
     if (endTickTimeoutRef.current) clearTimeout(endTickTimeoutRef.current);
     if (centerTickTimeoutRef.current) clearTimeout(centerTickTimeoutRef.current);
     clearSessionPolling();
+    playStartTimeSecRef.current = null;
+    nextChimeMarkRef.current = 1;
     setIsPlaying(false);
   }
 
@@ -503,6 +544,9 @@ export function useMetronomeEngine() {
     // visual's reference point to that same first beat so the swing and
     // the audio ticks can never disagree about which side is "now".
     swingRef.current = { referenceTimeSec: firstBeatAtSec, referenceSide: 'left', secondsPerBeat: 60 / paramsRef.current.bpm };
+    // The interval chime's elapsed-time reference — see handleBeatScheduled.
+    playStartTimeSecRef.current = firstBeatAtSec;
+    nextChimeMarkRef.current = 1;
 
     // Small while the tab is visible — see FOREGROUND_LOOKAHEAD_SEC's doc
     // comment for why: every beat inside this window is already
@@ -658,6 +702,12 @@ export function useMetronomeEngine() {
     setTickSubdivisionState(subdivision);
   }, []);
 
+  // Same reasoning as setTickSubdivision above — read fresh from
+  // paramsRef inside handleBeatScheduled, no engine call here.
+  const setChimeInterval = useCallback((interval: ChimeInterval) => {
+    setChimeIntervalState(interval);
+  }, []);
+
   const setHapticsEnabled = useCallback((enabled: boolean) => {
     setHapticsEnabledState(enabled);
   }, []);
@@ -680,6 +730,7 @@ export function useMetronomeEngine() {
       if (preset.panModulationDepth !== undefined) setPanModulationDepth(preset.panModulationDepth);
       if (preset.tickEarMode !== undefined) setTickEarMode(preset.tickEarMode);
       if (preset.tickSubdivision !== undefined) setTickSubdivision(preset.tickSubdivision);
+      if (preset.chimeInterval !== undefined) setChimeInterval(preset.chimeInterval);
     },
     [
       setCarrierHz,
@@ -692,6 +743,7 @@ export function useMetronomeEngine() {
       setPanModulationDepth,
       setTickEarMode,
       setTickSubdivision,
+      setChimeInterval,
     ]
   );
 
@@ -743,6 +795,7 @@ export function useMetronomeEngine() {
         panModulationDepth,
         tickEarMode,
         tickSubdivision,
+        chimeInterval,
         hapticsEnabled,
         lastSelectedSessionDurationMinutes: sessionDurationMinutes,
       });
@@ -763,6 +816,7 @@ export function useMetronomeEngine() {
     panModulationDepth,
     tickEarMode,
     tickSubdivision,
+    chimeInterval,
     hapticsEnabled,
     sessionDurationMinutes,
   ]);
@@ -795,6 +849,7 @@ export function useMetronomeEngine() {
     panModulationDepth,
     tickEarMode,
     tickSubdivision,
+    chimeInterval,
     hapticsEnabled,
     sessionDurationMinutes,
     sessionPhase,
@@ -818,6 +873,7 @@ export function useMetronomeEngine() {
     setPanModulationDepth,
     setTickEarMode,
     setTickSubdivision,
+    setChimeInterval,
     setHapticsEnabled,
     setSessionDurationMinutes,
     applyPreset,

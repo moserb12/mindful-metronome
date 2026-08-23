@@ -47,6 +47,30 @@ export const NOISE_SHIELDS: Record<NoiseType, NoiseShieldInfo> = {
     pairsWithBands: ['delta', 'theta'],
     tempoHint: 'slower tempos (30–56 BPM)',
   },
+  rainyForest: {
+    id: 'rainyForest',
+    label: 'Rainy Forest',
+    description:
+      'A soft pink-noise bed with scattered droplets falling through leaves — organic and textured rather than pure static. A gentle backdrop that still feels alive.',
+    pairsWithBands: ['alpha', 'theta'],
+    tempoHint: 'moderate tempos (60–84 BPM)',
+  },
+  tinRoof: {
+    id: 'tinRoof',
+    label: 'Tin Roof',
+    description:
+      'Sparse, bright pings landing at their own pace — like rain on a metal roof. Enough texture to hold attention without competing with the beat.',
+    pairsWithBands: ['beta', 'gamma'],
+    tempoHint: 'brisker tempos (84–160 BPM)',
+  },
+  drippyCavern: {
+    id: 'drippyCavern',
+    label: 'Drippy Cavern',
+    description:
+      'A near-silent rumble with the occasional echoing drip, each one trailing off into the dark. The deepest, most spacious shield for winding all the way down.',
+    pairsWithBands: ['delta', 'theta'],
+    tempoHint: 'slower tempos (30–56 BPM)',
+  },
 };
 
-export const NOISE_SHIELD_ORDER: NoiseType[] = ['pink', 'white', 'brown'];
+export const NOISE_SHIELD_ORDER: NoiseType[] = ['pink', 'white', 'brown', 'rainyForest', 'tinRoof', 'drippyCavern'];

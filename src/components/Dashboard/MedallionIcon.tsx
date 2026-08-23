@@ -3,7 +3,7 @@ import { MEDALLIONS_BY_ID, type MedallionId } from '../../data/medallions';
 // ============================================================================
 // MedallionIcon — one shared glyph renderer for every collectible, used
 // both in the dashboard's collection grid and (small) as the swappable
-// charm on the bagel-shaped tempo weight. Every glyph is hand-built from
+// charm on the pendant at the pendulum's tip. Every glyph is hand-built from
 // plain SVG primitives in a fixed 0..100 local viewBox, matching this app's
 // existing "thin strokes, glowing color, no external assets" visual
 // language (the pyramid outline, neuron nodes, eye) rather than pulling in

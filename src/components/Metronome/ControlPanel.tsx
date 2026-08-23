@@ -14,7 +14,7 @@ import { NOISE_SHIELDS, NOISE_SHIELD_ORDER } from '../../data/noiseShields';
 import { VIBE_GREETINGS } from '../../data/greetings';
 import type { CustomPreset } from '../../data/customPresets';
 import type { ApplyablePresetFields } from '../../hooks/useMetronomeEngine';
-import type { NoiseType, TickEarMode, TickSound, TickSubdivision } from '../../audio/binauralEngine';
+import type { ChimeInterval, NoiseType, TickEarMode, TickSound, TickSubdivision } from '../../audio/binauralEngine';
 
 interface ControlPanelProps {
   carrierHz: number;
@@ -29,6 +29,7 @@ interface ControlPanelProps {
   panModulationDepth: number;
   tickEarMode: TickEarMode;
   tickSubdivision: TickSubdivision;
+  chimeInterval: ChimeInterval;
   hapticsEnabled: boolean;
   onSetCarrierHz: (hz: number) => void;
   onSetBeatHz: (hz: number) => void;
@@ -40,12 +41,33 @@ interface ControlPanelProps {
   onSetPanModulationDepth: (depth: number) => void;
   onSetTickEarMode: (mode: TickEarMode) => void;
   onSetTickSubdivision: (subdivision: TickSubdivision) => void;
+  onSetChimeInterval: (interval: ChimeInterval) => void;
   onSetHapticsEnabled: (enabled: boolean) => void;
   onApplyPreset: (preset: ApplyablePresetFields) => void;
   getShareableLink: () => string;
   customPresets: CustomPreset[];
   onSaveCustomPreset: (name: string) => void;
   onDeleteCustomPreset: (id: CustomPreset['id']) => void;
+}
+
+/** One expandable section, backed by a native <details>/<summary> pair —
+ * gets keyboard toggling, ARIA semantics, and open/closed styling for
+ * free, so none of the 3 fully-collapsible groups below need their own
+ * useState/aria-expanded bookkeeping. Styled to match .control-group's
+ * existing look (see index.css's .control-group-summary/-chevron rules)
+ * so the panel's overall visual rhythm doesn't shift. */
+function CollapsibleGroup({ title, defaultOpen = false, children }: { title: string; defaultOpen?: boolean; children: React.ReactNode }) {
+  return (
+    <details className="control-group" open={defaultOpen}>
+      <summary className="control-group-summary">
+        <span className="control-label">{title}</span>
+        <span className="control-group-chevron" aria-hidden="true">
+          ▸
+        </span>
+      </summary>
+      <div className="control-group-body">{children}</div>
+    </details>
+  );
 }
 
 /** §9 custom presets — a second chip row beneath the built-in Presets,
@@ -186,6 +208,14 @@ const TICK_SUBDIVISION_OPTIONS: { value: TickSubdivision; label: string; title: 
   { value: 'CENTER', label: 'Off-beat only', title: 'Tick only as the pendulum passes center — no tick on arrival' },
 ];
 
+const CHIME_INTERVAL_OPTIONS: { value: ChimeInterval; label: string; title: string }[] = [
+  { value: 15, label: '15 min', title: 'Ring once every 15 minutes of play, escalating (1 ring, then 2, then 3...)' },
+  { value: 30, label: '30 min', title: 'Ring once every 30 minutes of play, escalating' },
+  { value: 45, label: '45 min', title: 'Ring once every 45 minutes of play, escalating' },
+  { value: 60, label: '60 min', title: 'Ring once every 60 minutes of play, escalating' },
+  { value: null, label: 'Off', title: 'No interval chime' },
+];
+
 /** Preview text for the current pan-modulation split at full swing, e.g.
  * "80/20" — mirrors exactly what the listener will hear at the extremes. */
 function splitPreviewLabel(depth: number): string {
@@ -207,6 +237,7 @@ export function ControlPanel({
   panModulationDepth,
   tickEarMode,
   tickSubdivision,
+  chimeInterval,
   hapticsEnabled,
   onSetCarrierHz,
   onSetBeatHz,
@@ -218,6 +249,7 @@ export function ControlPanel({
   onSetPanModulationDepth,
   onSetTickEarMode,
   onSetTickSubdivision,
+  onSetChimeInterval,
   onSetHapticsEnabled,
   onApplyPreset,
   getShareableLink,
@@ -236,6 +268,11 @@ export function ControlPanel({
   // so a reload gives real variety without a decorative timer running
   // just to rotate a header.
   const [greeting] = useState(() => VIBE_GREETINGS[Math.floor(Math.random() * VIBE_GREETINGS.length)]);
+  // The mixer needs Master to render OUTSIDE the collapsible region while
+  // Drone/Tick/Noise render inside it — a <details> can't split its
+  // <summary>-adjacent content that way, so this one group gets its own
+  // small local toggle rather than reusing CollapsibleGroup.
+  const [mixerOpen, setMixerOpen] = useState(false);
 
   return (
     <div className="control-panel">
@@ -271,38 +308,6 @@ export function ControlPanel({
 
       <div className="control-group">
         <div className="control-row-header">
-          <span className="control-label">Carrier tone</span>
-          <span className="control-value">{carrierHz.toFixed(0)} Hz</span>
-        </div>
-        <input
-          type="range"
-          min={MIN_CARRIER_HZ}
-          max={MAX_CARRIER_HZ}
-          step={1}
-          value={carrierHz}
-          onChange={(e) => onSetCarrierHz(Number(e.target.value))}
-        />
-      </div>
-
-      <div className="control-group">
-        <div className="control-row-header">
-          <span className="control-label">Binaural offset</span>
-          <span className="control-value" style={{ color: BANDS[band].color }}>
-            {beatHz.toFixed(1)} Hz · {BANDS[band].label}
-          </span>
-        </div>
-        <input
-          type="range"
-          min={MIN_BEAT_HZ}
-          max={MAX_BEAT_HZ}
-          step={0.5}
-          value={beatHz}
-          onChange={(e) => onSetBeatHz(Number(e.target.value))}
-        />
-      </div>
-
-      <div className="control-group">
-        <div className="control-row-header">
           <span className="control-label">Tempo</span>
           <span className="control-value">{bpm} BPM</span>
         </div>
@@ -323,6 +328,12 @@ export function ControlPanel({
         </select>
       </div>
 
+      {/* Volume Mixer: Master stays outside/above the collapsible region,
+          always visible — the "keep the frequently-touched control visible
+          with no extra taps" pattern the rest of the panel's collapsible
+          groups also follow. "Open mixer" reveals the per-channel balance
+          (Drone/Tick/Noise + noise-type picker), which is closer to a
+          set-and-forget tweak. */}
       <div className="control-group">
         <span className="control-label">Volume Mixer</span>
         <label className="mixer-row mixer-row-master">
@@ -336,59 +347,104 @@ export function ControlPanel({
             onChange={(e) => onSetMasterVolume(Number(e.target.value))}
           />
         </label>
-        <div className="mixer-divider" />
-        <label className="mixer-row">
-          <span>Drone</span>
-          <input
-            type="range"
-            min={0}
-            max={1}
-            step={0.01}
-            value={droneVolume}
-            onChange={(e) => onSetVolumes({ droneVolume: Number(e.target.value) })}
-          />
-        </label>
-        <label className="mixer-row">
-          <span>Tick</span>
-          <input
-            type="range"
-            min={0}
-            max={1}
-            step={0.01}
-            value={tickVolume}
-            onChange={(e) => onSetVolumes({ tickVolume: Number(e.target.value) })}
-          />
-        </label>
-        <label className="mixer-row">
-          <span>Noise shield</span>
-          <input
-            type="range"
-            min={0}
-            max={1}
-            step={0.01}
-            value={noiseVolume}
-            onChange={(e) => onSetVolumes({ noiseVolume: Number(e.target.value) })}
-          />
-        </label>
-        <div className="noise-type-row" style={{ '--chip-color': BANDS[band].color } as React.CSSProperties}>
-          {NOISE_SHIELD_ORDER.map((type) => (
-            <button
-              key={type}
-              type="button"
-              className={`noise-type-btn ${noiseType === type ? 'active' : ''}`}
-              onClick={() => onSetNoiseType(type)}
-            >
-              {NOISE_SHIELDS[type].label}
-            </button>
-          ))}
-        </div>
-        <p className="control-hint">
-          {activeShield.description} Pairs well with{' '}
-          {activeShield.pairsWithBands.map((b) => BANDS[b].label).join(' & ')} tones, {activeShield.tempoHint}.
-        </p>
+        <button
+          type="button"
+          className="mixer-expand-toggle"
+          aria-expanded={mixerOpen}
+          onClick={() => setMixerOpen((open) => !open)}
+        >
+          {mixerOpen ? 'Close mixer' : 'Open mixer'}
+          <span className={`control-group-chevron ${mixerOpen ? 'control-group-chevron-open' : ''}`} aria-hidden="true">
+            ▸
+          </span>
+        </button>
+        {mixerOpen && (
+          <div className="mixer-expand-content">
+            <div className="mixer-divider" />
+            <label className="mixer-row">
+              <span>Drone</span>
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.01}
+                value={droneVolume}
+                onChange={(e) => onSetVolumes({ droneVolume: Number(e.target.value) })}
+              />
+            </label>
+            <label className="mixer-row">
+              <span>Tick</span>
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.01}
+                value={tickVolume}
+                onChange={(e) => onSetVolumes({ tickVolume: Number(e.target.value) })}
+              />
+            </label>
+            <label className="mixer-row">
+              <span>Noise shield</span>
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.01}
+                value={noiseVolume}
+                onChange={(e) => onSetVolumes({ noiseVolume: Number(e.target.value) })}
+              />
+            </label>
+            <div className="noise-type-row" style={{ '--chip-color': BANDS[band].color } as React.CSSProperties}>
+              {NOISE_SHIELD_ORDER.map((type) => (
+                <button
+                  key={type}
+                  type="button"
+                  className={`noise-type-btn ${noiseType === type ? 'active' : ''}`}
+                  onClick={() => onSetNoiseType(type)}
+                >
+                  {NOISE_SHIELDS[type].label}
+                </button>
+              ))}
+            </div>
+            <p className="control-hint">
+              {activeShield.description} Pairs well with{' '}
+              {activeShield.pairsWithBands.map((b) => BANDS[b].label).join(' & ')} tones, {activeShield.tempoHint}.
+            </p>
+          </div>
+        )}
       </div>
 
-      <div className="control-group">
+      <CollapsibleGroup title="Sound design">
+        <div className="control-row-header">
+          <span className="control-label">Carrier tone</span>
+          <span className="control-value">{carrierHz.toFixed(0)} Hz</span>
+        </div>
+        <input
+          type="range"
+          min={MIN_CARRIER_HZ}
+          max={MAX_CARRIER_HZ}
+          step={1}
+          value={carrierHz}
+          onChange={(e) => onSetCarrierHz(Number(e.target.value))}
+        />
+        <div className="mixer-divider" />
+        <div className="control-row-header">
+          <span className="control-label">Binaural offset</span>
+          <span className="control-value" style={{ color: BANDS[band].color }}>
+            {beatHz.toFixed(1)} Hz · {BANDS[band].label}
+          </span>
+        </div>
+        <input
+          type="range"
+          min={MIN_BEAT_HZ}
+          max={MAX_BEAT_HZ}
+          step={0.5}
+          value={beatHz}
+          onChange={(e) => onSetBeatHz(Number(e.target.value))}
+        />
+      </CollapsibleGroup>
+
+      <CollapsibleGroup title="Ear & Beat">
         <div className="control-row-header">
           <span className="control-label">Tick ear</span>
           <span className="control-value">{splitPreviewLabel(panModulationDepth)} at the extremes</span>
@@ -418,9 +474,7 @@ export function ControlPanel({
             </button>
           ))}
         </div>
-      </div>
-
-      <div className="control-group">
+        <div className="mixer-divider" />
         <span className="control-label">Beat pattern</span>
         <div className="ear-mode-row" style={{ '--chip-color': BANDS[band].color } as React.CSSProperties}>
           {TICK_SUBDIVISION_OPTIONS.map((opt) => (
@@ -435,23 +489,44 @@ export function ControlPanel({
             </button>
           ))}
         </div>
-      </div>
+      </CollapsibleGroup>
 
-      {hapticsSupported && (
-        <div className="control-group">
-          <span className="control-label">Haptics</span>
-          <button
-            type="button"
-            className={`haptics-toggle ${hapticsEnabled ? 'active' : ''}`}
-            style={{ '--chip-color': BANDS[band].color } as React.CSSProperties}
-            aria-pressed={hapticsEnabled}
-            onClick={() => onSetHapticsEnabled(!hapticsEnabled)}
-          >
-            {hapticsEnabled ? 'Pulse felt on every tick' : 'Off'}
-          </button>
-          <p className="control-hint">A brief, subtle vibration on every tick — a bilateral pulse you can actually feel.</p>
+      <CollapsibleGroup title="Chime & Extras">
+        <span className="control-label">Chime every</span>
+        <div className="ear-mode-row" style={{ '--chip-color': BANDS[band].color } as React.CSSProperties}>
+          {CHIME_INTERVAL_OPTIONS.map((opt) => (
+            <button
+              key={String(opt.value)}
+              type="button"
+              className={`ear-mode-btn ${chimeInterval === opt.value ? 'active' : ''}`}
+              title={opt.title}
+              onClick={() => onSetChimeInterval(opt.value)}
+            >
+              {opt.label}
+            </button>
+          ))}
         </div>
-      )}
+        <p className="control-hint">
+          A soft escalating chime (1 ring, then 2, then 3...) marking elapsed play time. Resets to expecting one ring
+          every time you pause or stop.
+        </p>
+        {hapticsSupported && (
+          <>
+            <div className="mixer-divider" />
+            <span className="control-label">Haptics</span>
+            <button
+              type="button"
+              className={`haptics-toggle ${hapticsEnabled ? 'active' : ''}`}
+              style={{ '--chip-color': BANDS[band].color } as React.CSSProperties}
+              aria-pressed={hapticsEnabled}
+              onClick={() => onSetHapticsEnabled(!hapticsEnabled)}
+            >
+              {hapticsEnabled ? 'Pulse felt on every tick' : 'Off'}
+            </button>
+            <p className="control-hint">A brief, subtle vibration on every tick — a bilateral pulse you can actually feel.</p>
+          </>
+        )}
+      </CollapsibleGroup>
     </div>
   );
 }

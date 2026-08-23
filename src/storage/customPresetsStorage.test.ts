@@ -17,6 +17,7 @@ const PRESET: CustomPreset = {
   panModulationDepth: 0.4,
   tickEarMode: 'OPPOSITE',
   tickSubdivision: 'ENDS_AND_CENTER',
+  chimeInterval: 30,
   createdAt: 1700000000000,
 };
 

@@ -3,6 +3,105 @@
 This file is read automatically by Claude Code at the start of every session
 in this repo. Keep it up to date as decisions get made.
 
+## Status update — pendant medallion, volume-slider fix, accordion panel, chime + ambiance
+
+A review of a teammate's pushed gamification commit (`af5d7ee`) plus a
+batch of new/corrected requests from the builder, all landed together.
+
+**Volume sliders were silently broken mid-play (fixed, highest priority).**
+"The volume sliders don't take effect unless I pause and unpause" traced
+to a real, reproducible bug in this session's OWN earlier
+`scheduleDroneSwing()` work, not to the gamification commit: dragging
+Drone/Tick/Noise threw an uncaught `NotSupportedError` in Chrome, because
+`setVolumes()`/`setPanModulationDepth()` called the private
+`applyDroneBalance()`, which does `setTargetAtTime()` on
+`droneGainLeft`/`droneGainRight` — the SAME two AudioParams
+`scheduleDroneSwing()` had already committed a `setValueCurveAtTime()`
+curve onto for the current beat. Two incompatible Web Audio automation
+methods can't both target one param's overlapping time range. The throw
+aborted the rest of `setVolumes()` before it reached the
+`tickGain`/`noiseGain` lines, which is why Tick/Noise silently stopped
+responding too, and Pause "fixed" it by clearing the scheduled curve.
+Fix: `applyDroneBalance()` is no longer called from either setter — only
+from `start()`, where it's safe (no curve exists yet). The updated value
+is picked up by the very next `scheduleDroneSwing()` call instead, at
+most one beat later. Confirmed live via a monkey-patched `AudioParam`
+Playwright diagnostic: zero thrown errors, drone volume audibly changes
+mid-play with no pause needed.
+
+**The medallion charm moved from the tempo weight to a new `Pendant` at
+the pendulum's tip.** `af5d7ee`'s design put the swappable medallion
+charm (and its tap-to-open-picker gesture) on the bagel-shaped tempo
+weight partway up the rod — corrected per explicit builder direction:
+"the medallion system was meant to change the shape and design of the
+pendant at the end of the pendulum, not near the weight." `TempoWeight`
+is now a pure drag handle again (`MetronomeVisual.tsx`) — no
+`medallionId`/`onTap` props, no `foreignObject` charm, no tap-vs-drag
+gesture detection, no keyboard handling. A new `Pendant` component
+renders at the arm's tip (where the old bare `metronome-arm-tip` circle
+was) and carries the charm + tap gesture instead, following the same
+plain onClick/onKeyDown convention as the eye and pyramid elsewhere in
+this file, since it's a pure click target with no drag concern. Its
+`onKeyDown` calls `e.stopPropagation()` so Enter/Space toggling the
+picker doesn't ALSO trigger the global Space play/pause shortcut (the
+same class of bug `af5d7ee`'s weight-based version had). Focus restores
+to the pendant (not the weight) when the picker closes.
+
+**Each brainwave band's tempo weight is now a distinct shape**, not one
+bagel for all five (`renderWeightShape()` in `MetronomeVisual.tsx`):
+delta = cloud, theta = leaf, alpha = the original bagel (unchanged —
+still the default, zero-regression path), beta = 4-point sparkle, gamma =
+lightning bolt. All four new shapes fill with `BANDS[band].color`; only
+alpha's bagel keeps its own fixed dough color and its evenodd hole (now
+just an empty hole, since the charm moved to the pendant).
+
+**`ControlPanel.tsx` is now a series of expandable sections**, per the
+builder's ask to keep frequently-touched controls visible with no extra
+taps while everything else collapses. Presets, Tempo, and the Volume
+Mixer's Master slider stay always-visible; a new **"Open mixer"** button
+(directly under Master, matching the builder's own phrasing) reveals
+Drone/Tick/Noise + the noise-type picker. Three new collapsible groups
+(native `<details>`/`<summary>`, via a small `CollapsibleGroup`
+component — free keyboard toggling/ARIA, no manual open-state
+bookkeeping) hold everything else: **Sound design** (Carrier tone +
+Binaural offset), **Ear & Beat** (Tick ear/panning + Beat pattern), and
+**Chime & Extras** (the new interval chime below + Haptics).
+
+**New "Chime every: 15/30/45/60/Off" control** — an escalating ship's-
+bell-style chime (1 ring at the first elapsed-play-time mark, 2 at the
+second, etc.), resetting to expecting "1" on every Pause/Stop.
+`BinauralEngine.playIntervalChime()` (octave-up root + fifth, distinct
+from `playClosingChime()`'s session-end tone) is scheduled from
+`handleBeatScheduled` in `useMetronomeEngine.ts` — never a poll or
+`requestAnimationFrame` — mirroring `scheduleDroneSwing()`'s own
+background-safe-scheduling precedent exactly, so it keeps firing
+correctly even in a backgrounded tab. `chimeInterval: ChimeInterval`
+threaded through the full existing persistence pipeline (settings,
+custom presets, shareable-preset application) alongside
+`tickSubdivision`.
+
+**Three new ambiance noise textures** — Rainy Forest, Tin Roof, Drippy
+Cavern — extend the EXISTING noise-shield picker/volume slider (same
+`NoiseType`, same click-free swap), not a new layer. All three are
+procedurally synthesized in `binauralEngine.ts`, zero new assets:
+Rainy Forest layers Poisson-timed lowpass-softened droplet transients
+over a scaled-down pink-noise bed; Tin Roof is sparse damped-sine pings
+(1800-4000 Hz) with no bed; Drippy Cavern pairs a near-silent
+brown-noise-style rumble with very sparse plinks, each followed by 3
+exponentially-decaying delayed repeats (a cheap "poor man's reverb").
+
+**`<BilateralComingSoonBanner />` moved to the literal bottom of the
+page** in `App.tsx` — after the footer, not between main and the footer.
+
+**Noted for a future session, not built now** (builder confirmed "note
+for later only" when asked): an eventual ad-break/"Just The Gift" support
+option — a one-time, permanently-dismissible, hidden-by-default prompt
+("Want to support the project? Take a water break and let an ad play"),
+meant to be *stumbled upon* rather than pushed at every visitor — plus a
+secret `$`-sign pendant charm for gift supporters, which would naturally
+slot into the medallion/`Pendant` system above once it exists. No fields,
+UI, or ad/payment integration decisions exist for this yet.
+
 ## Status update — iris timer removed, gamification layer re-applied onto the real HEAD
 
 **Context: this pass replaces an earlier, mis-based delivery.** The

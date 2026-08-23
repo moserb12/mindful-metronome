@@ -118,7 +118,7 @@ export function FocusDashboard({
       </div>
 
       <div className="focus-card medallion-collection">
-        <span className="control-label">Medallion collection — click one to mount it on the pendulum weight</span>
+        <span className="control-label">Medallion collection — click one to mount it on the pendant</span>
         <div className="medallion-grid">
           {MEDALLIONS.map((def) => {
             const unlocked = unlockedSet.has(def.id);

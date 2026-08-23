@@ -3,8 +3,8 @@ import { BANDS } from './bands';
 
 // ============================================================================
 // Medallions — the little collectible glyphs a listener can mount on the
-// end of the pendulum weight. Two families, two different things to be
-// proud of:
+// pendant at the end of the pendulum arm. Two families, two different
+// things to be proud of:
 //
 //   - Five "band orbs," one per brainwave band, unlocked by spending real
 //     time IN that band (see BAND_MINUTES_TO_UNLOCK below). These are the

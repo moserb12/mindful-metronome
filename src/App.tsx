@@ -30,6 +30,7 @@ export default function App() {
       panModulationDepth: engine.panModulationDepth,
       tickEarMode: engine.tickEarMode,
       tickSubdivision: engine.tickSubdivision,
+      chimeInterval: engine.chimeInterval,
     });
   }
 
@@ -104,6 +105,7 @@ export default function App() {
           panModulationDepth={engine.panModulationDepth}
           tickEarMode={engine.tickEarMode}
           tickSubdivision={engine.tickSubdivision}
+          chimeInterval={engine.chimeInterval}
           hapticsEnabled={engine.hapticsEnabled}
           onSetCarrierHz={engine.setCarrierHz}
           onSetBeatHz={engine.setBeatHz}
@@ -115,6 +117,7 @@ export default function App() {
           onSetPanModulationDepth={engine.setPanModulationDepth}
           onSetTickEarMode={engine.setTickEarMode}
           onSetTickSubdivision={engine.setTickSubdivision}
+          onSetChimeInterval={engine.setChimeInterval}
           onSetHapticsEnabled={engine.setHapticsEnabled}
           onApplyPreset={engine.applyPreset}
           getShareableLink={engine.getShareableLink}
@@ -123,8 +126,6 @@ export default function App() {
           onDeleteCustomPreset={customPresetsHook.deletePreset}
         />
       </main>
-
-      <BilateralComingSoonBanner />
 
       <FocusDashboard
         totalMinutes={focusStats.totalMinutes}
@@ -146,6 +147,8 @@ export default function App() {
           built by BBM
         </a>
       </footer>
+
+      <BilateralComingSoonBanner />
     </div>
   );
 }

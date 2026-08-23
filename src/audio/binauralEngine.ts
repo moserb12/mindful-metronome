@@ -45,8 +45,18 @@ export type TickSound = 'soft' | 'wood' | 'kick' | 'hihat';
 
 /** Which noise-shield texture plays behind the drone/tick layers. See
  * src/data/noiseShields.ts for the user-facing description of each and
- * which brainwave bands/tempos it pairs well with. */
-export type NoiseType = 'pink' | 'white' | 'brown';
+ * which brainwave bands/tempos it pairs well with. The three "ambiance"
+ * textures (rainyForest/tinRoof/drippyCavern) extend the same picker/
+ * volume slider as pink/white/brown — see buildRainyForestBuffer/
+ * buildTinRoofBuffer/buildDrippyCavernBuffer below for how each is
+ * synthesized. */
+export type NoiseType = 'pink' | 'white' | 'brown' | 'rainyForest' | 'tinRoof' | 'drippyCavern';
+
+/** How often a listener wants a chime marking elapsed PLAY time —
+ * escalating (1 ring at the first mark, 2 at the second, etc.), reset to
+ * expecting "1" on every Pause/Stop. `null` is off — explicitly opt-in,
+ * unlike TickSubdivision's always-on default. See playIntervalChime(). */
+export type ChimeInterval = 15 | 30 | 45 | 60 | null;
 
 /** How a tick's stereo placement relates to the drone's live L/R balance:
  *   - MATCH: fires in whichever ear the pendulum just arrived at — the ear
@@ -96,6 +106,11 @@ const DRONE_STOP_RELEASE_SEC = 0.03;
  * any tempo this app supports, without generating an excessive number of
  * automation points every beat. */
 const DRONE_SWING_CURVE_SAMPLES = 24;
+
+/** Duration of one chime tone, and the gap after it before the next one
+ * in the same escalating ring — see playIntervalChime(). */
+const INTERVAL_CHIME_TONE_SEC = 0.35;
+const INTERVAL_CHIME_GAP_SEC = 0.28;
 
 export interface MetronomeParams {
   carrierHz: number;
@@ -186,6 +201,131 @@ function buildBrownNoiseBuffer(context: AudioContext, seconds = 2): AudioBuffer 
   return buffer;
 }
 
+/** Generates 8 seconds of "rainy forest" ambiance: a pink-noise bed (the
+ * same Paul Kellet cascade as buildPinkNoiseBuffer, scaled down to ~40%
+ * since it's a bed under the droplets, not the whole texture) plus
+ * layered droplet transients timed by a Poisson process — each a short
+ * decaying noise burst softened through a one-pole lowpass into a "plip"
+ * rather than a click. 8 seconds (vs. the stationary three's 2s) so the
+ * transient-based loop seam is imperceptible. */
+function buildRainyForestBuffer(context: AudioContext, seconds = 8): AudioBuffer {
+  const bufferSize = context.sampleRate * seconds;
+  const buffer = context.createBuffer(1, bufferSize, context.sampleRate);
+  const output = buffer.getChannelData(0);
+  const sampleRate = context.sampleRate;
+
+  let b0 = 0,
+    b1 = 0,
+    b2 = 0,
+    b3 = 0,
+    b4 = 0,
+    b5 = 0,
+    b6 = 0;
+  for (let i = 0; i < bufferSize; i++) {
+    const white = Math.random() * 2 - 1;
+    b0 = 0.99886 * b0 + white * 0.0555179;
+    b1 = 0.99332 * b1 + white * 0.0750759;
+    b2 = 0.969 * b2 + white * 0.153852;
+    b3 = 0.8665 * b3 + white * 0.3104856;
+    b4 = 0.55 * b4 + white * 0.5329522;
+    b5 = -0.7616 * b5 - white * 0.016898;
+    output[i] = (b0 + b1 + b2 + b3 + b4 + b5 + b6 + white * 0.5362) * 0.03 * 0.4;
+    b6 = white * 0.115926;
+  }
+
+  const dropletsPerSec = 14;
+  let t = 0;
+  while (t < seconds) {
+    t += -Math.log(1 - Math.random()) / dropletsPerSec;
+    if (t >= seconds) break;
+    const startSample = Math.floor(t * sampleRate);
+    const durationSec = 0.015 + Math.random() * 0.02; // 15-35ms
+    const durationSamples = Math.floor(durationSec * sampleRate);
+    const peak = 0.12 + Math.random() * 0.08;
+    let lowpassState = 0;
+    for (let i = 0; i < durationSamples && startSample + i < bufferSize; i++) {
+      const decay = Math.exp(-i / (durationSamples * 0.35));
+      const white = (Math.random() * 2 - 1) * peak * decay;
+      lowpassState += (white - lowpassState) * 0.35; // one-pole lowpass softens the burst into a "plip"
+      output[startSample + i] += lowpassState;
+    }
+  }
+
+  return buffer;
+}
+
+/** Generates 8 seconds of "tin roof" ambiance: sparse, louder, more tonal
+ * pings — each a damped sine burst in the 1800-4000 Hz range, no noise
+ * bed, timed by a Poisson process. */
+function buildTinRoofBuffer(context: AudioContext, seconds = 8): AudioBuffer {
+  const bufferSize = context.sampleRate * seconds;
+  const buffer = context.createBuffer(1, bufferSize, context.sampleRate);
+  const output = buffer.getChannelData(0);
+  const sampleRate = context.sampleRate;
+
+  const pingsPerSec = 3.5;
+  let t = 0;
+  while (t < seconds) {
+    t += -Math.log(1 - Math.random()) / pingsPerSec;
+    if (t >= seconds) break;
+    const startSample = Math.floor(t * sampleRate);
+    const freq = 1800 + Math.random() * 2200; // 1800-4000 Hz
+    const durationSec = 0.06 + Math.random() * 0.05; // 60-110ms decay
+    const durationSamples = Math.floor(durationSec * sampleRate);
+    const peak = 0.18 + Math.random() * 0.1;
+    for (let i = 0; i < durationSamples && startSample + i < bufferSize; i++) {
+      const decay = Math.exp(-i / (durationSamples * 0.3));
+      output[startSample + i] += Math.sin((2 * Math.PI * freq * i) / sampleRate) * peak * decay;
+    }
+  }
+
+  return buffer;
+}
+
+/** Generates 8 seconds of "drippy cavern" ambiance: a near-silent rumble
+ * bed (the same leaky-integrator technique as buildBrownNoiseBuffer,
+ * drastically scaled down) plus very sparse plinks, each followed by 3
+ * exponentially-decaying delayed repeats — a cheap "poor man's reverb"
+ * rather than a real convolution reverb. */
+function buildDrippyCavernBuffer(context: AudioContext, seconds = 8): AudioBuffer {
+  const bufferSize = context.sampleRate * seconds;
+  const buffer = context.createBuffer(1, bufferSize, context.sampleRate);
+  const output = buffer.getChannelData(0);
+  const sampleRate = context.sampleRate;
+
+  const leak = 0.02;
+  let lastOut = 0;
+  for (let i = 0; i < bufferSize; i++) {
+    const white = Math.random() * 2 - 1;
+    lastOut = (lastOut + leak * white) / (1 + leak);
+    output[i] = lastOut * 0.15;
+  }
+
+  const plinksPerSec = 0.6;
+  const repeatDelaysSec = [0, 0.09, 0.19, 0.31];
+  let t = 0;
+  while (t < seconds) {
+    t += -Math.log(1 - Math.random()) / plinksPerSec;
+    if (t >= seconds) break;
+    const freq = 500 + Math.random() * 400;
+    const peak = 0.2 + Math.random() * 0.1;
+    repeatDelaysSec.forEach((delaySec, repeatIndex) => {
+      const repeatStartSec = t + delaySec;
+      if (repeatStartSec >= seconds) return;
+      const startSample = Math.floor(repeatStartSec * sampleRate);
+      const durationSec = 0.4;
+      const durationSamples = Math.floor(durationSec * sampleRate);
+      const repeatPeak = peak * Math.pow(0.5, repeatIndex);
+      for (let i = 0; i < durationSamples && startSample + i < bufferSize; i++) {
+        const decay = Math.exp(-i / (durationSamples * 0.25));
+        output[startSample + i] += Math.sin((2 * Math.PI * freq * i) / sampleRate) * repeatPeak * decay;
+      }
+    });
+  }
+
+  return buffer;
+}
+
 export class BinauralEngine {
   readonly context: AudioContext;
   readonly analyser: AnalyserNode;
@@ -246,6 +386,9 @@ export class BinauralEngine {
       pink: buildPinkNoiseBuffer(this.context),
       white: buildWhiteNoiseBuffer(this.context),
       brown: buildBrownNoiseBuffer(this.context),
+      rainyForest: buildRainyForestBuffer(this.context),
+      tinRoof: buildTinRoofBuffer(this.context),
+      drippyCavern: buildDrippyCavernBuffer(this.context),
     };
   }
 
@@ -391,6 +534,39 @@ export class BinauralEngine {
     });
   }
 
+  /**
+   * The escalating "chime every N minutes" tone — 1 ring at the first
+   * elapsed-play-time mark, 2 at the second, and so on (see ChimeInterval
+   * and its scheduling in useMetronomeEngine.ts's handleBeatScheduled,
+   * which computes `chimeCount` and calls this at a precise pre-scheduled
+   * AudioContext time, never "now"). A distinct, lighter timbre than
+   * playClosingChime() (reserved for session-end): an octave-up root, a
+   * fifth above, for a bell character rather than a resolving chord.
+   * Routed to `analyser`, the same mix point as everything else.
+   */
+  playIntervalChime(atTimeSec: number, chimeCount: number): void {
+    const root = this.params.carrierHz * 2;
+    for (let i = 0; i < chimeCount; i++) {
+      const toneStart = atTimeSec + i * (INTERVAL_CHIME_TONE_SEC + INTERVAL_CHIME_GAP_SEC);
+      const osc = this.context.createOscillator();
+      const gain = this.context.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(root * 1.5, toneStart);
+      gain.gain.setValueAtTime(0, toneStart);
+      gain.gain.linearRampToValueAtTime(0.28, toneStart + 0.015);
+      osc.connect(gain).connect(this.analyser);
+      const stopAt = toneStart + INTERVAL_CHIME_TONE_SEC;
+      // Same click-free release shape as fireTickOscillator(): ride the
+      // exponential decay near-silent, then a short linear ramp to an
+      // exact 0 before stop() (an exponential ramp can only approach
+      // zero, never reach it).
+      gain.gain.exponentialRampToValueAtTime(0.0001, stopAt);
+      gain.gain.linearRampToValueAtTime(0, stopAt + TICK_RELEASE_TAIL_SEC);
+      osc.start(toneStart);
+      osc.stop(stopAt + TICK_RELEASE_TAIL_SEC);
+    }
+  }
+
   /** Smoothly retune the drone to a new carrier/beat pair without a click —
    * safe to call continuously while a slider drags. */
   setFrequencies(carrierHz: number, beatHz: number): void {
@@ -402,11 +578,21 @@ export class BinauralEngine {
     }
   }
 
+  /** Does NOT touch the drone gain nodes directly while playing — once
+   * playback has started, `scheduleDroneSwing()` pre-schedules a
+   * `setValueCurveAtTime()` curve on `droneGainLeft`/`droneGainRight` for
+   * every beat, and a same-param `setTargetAtTime()` call here (via
+   * `applyDroneBalance()`) that overlaps that curve throws a real, uncaught
+   * `NotSupportedError` in Chrome — which used to abort this method before
+   * it reached the tick/noise lines below, silently breaking all three
+   * sliders until the next Pause cleared the scheduled curve. The updated
+   * `droneVolume` is still applied — just picked up by the very next
+   * `scheduleDroneSwing()` call (at most one beat away) instead of being
+   * pushed twice through two conflicting scheduling APIs. */
   setVolumes(droneVolume: number, tickVolume: number, noiseVolume: number): void {
     this.params.droneVolume = droneVolume;
     this.params.tickVolume = tickVolume;
     this.params.noiseVolume = noiseVolume;
-    this.applyDroneBalance();
     this.tickGain.gain.setTargetAtTime(clamp01(tickVolume), this.context.currentTime, 0.03);
     this.noiseGain.gain.setTargetAtTime(clamp01(noiseVolume), this.context.currentTime, 0.03);
   }
@@ -447,9 +633,12 @@ export class BinauralEngine {
     this.params.tickEarMode = mode;
   }
 
+  /** See the comment on setVolumes() — deliberately does not call
+   * applyDroneBalance() while playing, for the same NotSupportedError
+   * reason. The updated depth is picked up by the next
+   * scheduleDroneSwing() call. */
   setPanModulationDepth(depth: number): void {
     this.params.panModulationDepth = clamp01(depth);
-    this.applyDroneBalance();
   }
 
   /**
