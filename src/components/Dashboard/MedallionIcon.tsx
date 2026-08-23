@@ -447,13 +447,33 @@ function DoublePendulumGlyph({ color }: { color: string }) {
  * a deliberate few, and only the rarer tiers, so movement itself reads as
  * part of what makes a pull special rather than background noise across
  * all 51 icons. See the matching classes in index.css, all guarded by
- * prefers-reduced-motion like every other animation in this app. */
+ * prefers-reduced-motion like every other animation in this app.
+ *
+ * Rule, made explicit after an earlier pass left it inconsistent: within
+ * any family that has movement at all, EVERY rare-and-above member of that
+ * family gets it too — not just one representative item. The first pass
+ * missed this (Deep Coil/rare moved but Dream Coil/epic sat still right
+ * next to it in the grid), which read as broken rather than intentional.
+ * Paired members of the same family reuse the SAME animation type but
+ * lean on the two directional variants (spin/spin-reverse) or a different
+ * existing type where that fits better, so two family-mates sitting next
+ * to each other in the grid read as related, not identical. */
 const MYSTERY_ANIMATION_CLASS: Partial<Record<MysteryMedallionId, string>> = {
-  'mystery-deep-coil': 'mystery-anim-spin',
-  'mystery-far-halo': 'mystery-anim-spin-reverse',
-  'mystery-long-tail-comet': 'mystery-anim-drift',
-  'mystery-solstice-bloom': 'mystery-anim-sway',
+  // bloom
+  'mystery-nightbloom': 'mystery-anim-drift', // rare
+  'mystery-solstice-bloom': 'mystery-anim-sway', // epic
+  // coil
+  'mystery-deep-coil': 'mystery-anim-spin', // rare
+  'mystery-dream-coil': 'mystery-anim-spin-reverse', // epic — counter-rotates against Deep Coil
+  // ring
+  'mystery-echo-ring': 'mystery-anim-spin', // rare
+  'mystery-far-halo': 'mystery-anim-spin-reverse', // rare — counter-rotates against Echo Ring
+  // comet
+  'mystery-silver-comet': 'mystery-anim-sway', // rare
+  'mystery-long-tail-comet': 'mystery-anim-drift', // epic
+  // eye (legendary tier — both members)
   'mystery-third-eye': 'mystery-anim-blink',
+  'mystery-singularity': 'mystery-anim-spin',
 };
 
 const LOCKED_COLOR = '#5b6472';
@@ -613,12 +633,24 @@ export function MedallionGlyph({ id, color }: { id: MedallionId; color: string }
         </>
       );
     case 'yin-yang':
+      // The lower dot sits INSIDE the filled swoosh, not the empty half —
+      // drawing it as a same-color outline (the original approach) put a
+      // color={color} ring on top of a color={color} fill, indistinguishable
+      // from its own background and effectively invisible. Real yin-yang
+      // dots are a genuine cutout of the opposite shade; the closest
+      // single-color equivalent is a true hole through the swoosh (evenodd,
+      // same circleSubpath technique the crescent-moon glyph already uses)
+      // so the badge's own background shows through, exactly like the
+      // upper (empty-half) region already does.
       return (
         <>
           <circle cx={50} cy={50} r={30} fill="none" stroke={color} strokeWidth={2.5} />
-          <path d="M50 20 A15 15 0 0 1 50 50 A15 15 0 0 0 50 80 A30 30 0 0 0 50 20 Z" fill={color} />
+          <path
+            fillRule="evenodd"
+            fill={color}
+            d={`M50 20 A15 15 0 0 1 50 50 A15 15 0 0 0 50 80 A30 30 0 0 0 50 20 Z ${circleSubpath(50, 65, 5)}`}
+          />
           <circle cx={50} cy={35} r={5} fill={color} />
-          <circle cx={50} cy={65} r={5} fill="none" stroke={color} strokeWidth={2} />
         </>
       );
     case 'flame':

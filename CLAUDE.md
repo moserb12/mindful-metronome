@@ -3,6 +3,39 @@
 This file is read automatically by Claude Code at the start of every session
 in this repo. Keep it up to date as decisions get made.
 
+## Status update — animation-pass consistency fix; yin-yang's missing dot
+
+Two real bugs the builder caught by eye after the previous two passes.
+
+**Animation coverage was inconsistent within a family — fixed.** The
+first animation pass (see the status update below) picked one
+representative item per family (e.g. Deep Coil/rare) without checking
+whether that family had OTHER rare-or-higher members that sat right next
+to it in the grid, still frozen (Dream Coil/epic). That reads as broken,
+not intentional. `MYSTERY_ANIMATION_CLASS` in `MedallionIcon.tsx` now
+follows an explicit rule instead: once a family has movement at all,
+EVERY rare-and-above member of that family gets it. Newly animated:
+Nightbloom (bloom/rare), Dream Coil (coil/epic), Echo Ring (ring/rare),
+Silver Comet (comet/rare), Singularity (eye/legendary) — bringing the
+total to 10 CSS-animated mystery medallions plus the one physics-simulated
+Double Pendulum. Paired family-mates reuse the same animation TYPE but
+lean on the spin/spin-reverse pair (so e.g. Deep Coil and Dream Coil
+visibly counter-rotate against each other) rather than looking identical
+side by side.
+
+**The yin-yang milestone medallion's lower dot was invisible — fixed.**
+Root cause: the lower dot sits INSIDE the filled swoosh, not the empty
+half, but was drawn as `fill="none" stroke={color}` — a same-color
+OUTLINE on top of a same-color FILL is indistinguishable from its own
+background in this app's single-color glyph system, so it never actually
+rendered as a visible dot. Real yin-yang dots are a cutout of the
+opposite shade; the correct single-color equivalent (verified by
+rendering the geometry standalone before touching the real file) is a
+genuine hole punched through the swoosh via `fillRule="evenodd"` +
+`circleSubpath()` — the exact same technique the crescent-moon glyph
+already uses elsewhere in this file — so the badge's own background
+shows through, matching how the upper (already-correct) dot reads.
+
 ## Status update — footer poll: "should this app add accounts?"
 
 A one-question poll at the very bottom of the page (`AccountPoll.tsx`,
