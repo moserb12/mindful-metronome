@@ -3,6 +3,65 @@
 This file is read automatically by Claude Code at the start of every session
 in this repo. Keep it up to date as decisions get made.
 
+## Status update — pendant badge-circle anchor, ∞ duration symbol (supersedes "no badge circle" below)
+
+Follow-up to the pendant redesign in the next status entry down, after two
+rounds of real bug reports from screenshots plus a design suggestion.
+
+**Bug 1 — pendant disconnected from the rod.** Several glyphs (infinity's
+crossing point, the hourglass's pinch, crescent-moon's off-center cutout,
+lightbulb's stroke-only ring) have little or no painted material exactly
+at their own local (50,50) anchor — the point pinned to the rod's tip —
+so those medallions rendered with a visible gap. Fixed (temporarily) with
+a small fixed-length "bail" connector line between the rod's tip and the
+glyph.
+
+**Bug 2 — pendant off-center under the rod, for EVERY medallion, not just
+asymmetric ones.** Root cause: `.pendant-glyph` carried both an SVG
+attribute `transform` (positioning) AND CSS `transform-box`/
+`transform-origin` (for the hover-zoom `transform: scale()`) on the same
+`<g>`. Combining those makes the browser reinterpret the whole attribute
+transform relative to that element's own fill-box, silently shifting the
+render ~17-24px right of the mathematically-intended point — confirmed
+via `getBoundingClientRect()` (NOT `getBBox()`, which returns coordinates
+in an element's own pre-transform local space when that element itself
+carries a `transform` attribute, and gives meaningless numbers for this
+kind of comparison) across all 15 medallions, even perfectly symmetric
+ones like the hourglass and atom. Fixed by splitting positioning and
+hover-scale across two nested `<g>`s: an outer one doing ONLY the
+attribute-transform, an inner `.pendant-glyph` CSS is free to scale.
+
+**Then, the builder's own suggested fix for both, generalized:** encase
+every pendant medallion in the same uniform circular badge
+`MedallionIcon` already draws in the picker/dashboard grid
+(`MEDALLION_BADGE_RADIUS=47`, now exported from `MedallionIcon.tsx`), and
+anchor the pendant's positioning transform to that badge circle's own
+TOP-MIDDLE point — `translate(-50, -(50 - MEDALLION_BADGE_RADIUS))`,
+i.e. `-50 -3` — instead of the glyph's local center `translate(-50 -50)`.
+Since the badge circle is geometrically identical for all 15 medallions
+regardless of each glyph's own (often asymmetric) silhouette, this is a
+strictly more robust fix than either bug patch above: it guarantees every
+medallion hangs from the same point by construction, and the badge's own
+top edge sitting right at the rod's tip means the earlier bail connector
+is now unnecessary (removed, along with `.pendant-link`). New
+`.pendant-badge` CSS matches `MedallionIcon`'s badge styling exactly
+(`fill: rgba(8,10,20,0.35)`, `stroke-width: 2.5`, `opacity: 0.9`) with
+`stroke` passed per-instance as the medallion's identity color.
+`PENDANT_HIT_RADIUS` is now derived (`MEDALLION_BADGE_RADIUS *
+PENDANT_GLYPH_SCALE ≈ 30.55`) instead of a separate hand-picked number,
+since the badge is now the pendant's true visual boundary. Verified via
+`getBoundingClientRect()` across all 15 medallions post-fix: badge-top-to-
+rod-tip offset is sub-pixel (≤0.0001px, floating-point noise) for every
+single one, including the previously-broken crescent-moon and the new
+spiral/infinity orbs.
+
+**The Infinite-duration chip is now an ∞ symbol**, not the word
+"Infinite" (`SessionTimer.tsx`'s `DURATION_OPTIONS`) — a symbol reads
+cleaner as a chip label at that width. `aria-label="Infinite"` keeps it
+announced clearly for screen readers; the in-session status prose
+("Playing — Infinite, so it'll keep going...") is unchanged, since that
+wasn't part of the ask.
+
 ## Status update — annular session-timer ring, shaped pendant, band-orb glyph redesign
 
 Three related visual changes, all confined to `MetronomeVisual.tsx` plus

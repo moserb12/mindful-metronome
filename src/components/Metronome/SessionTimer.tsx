@@ -1,12 +1,14 @@
 import { formatCountdown } from '../../format';
 import type { SessionPlaybackPhase } from '../../hooks/useMetronomeEngine';
 
-const DURATION_OPTIONS: { minutes: number | null; label: string }[] = [
+const DURATION_OPTIONS: { minutes: number | null; label: string; ariaLabel?: string }[] = [
   { minutes: 15, label: '15 min' },
   { minutes: 30, label: '30 min' },
   { minutes: 45, label: '45 min' },
   { minutes: 60, label: '60 min' },
-  { minutes: null, label: 'Infinite' },
+  // A symbol reads cleaner as a chip label than the word "Infinite" —
+  // ariaLabel keeps it announced clearly for screen readers.
+  { minutes: null, label: '∞', ariaLabel: 'Infinite' },
 ];
 
 /** Only covers the three phases a session actually passes through — the
@@ -75,6 +77,7 @@ export function SessionTimer({
             type="button"
             className={`preset-chip duration-chip ${sessionDurationMinutes === opt.minutes ? 'active' : ''}`}
             onClick={() => onSetSessionDurationMinutes(opt.minutes)}
+            aria-label={opt.ariaLabel ?? opt.label}
           >
             {opt.label}
           </button>

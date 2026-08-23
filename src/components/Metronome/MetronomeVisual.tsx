@@ -5,7 +5,7 @@ import { MEDALLIONS_BY_ID, type MedallionId } from '../../data/medallions';
 import { MOOD_BY_BAND } from '../../data/moods';
 import { buildSmoothPath, clamp, pendulumEase, waveOffset } from '../../engine/motion';
 import { computeSwingSegment, type SessionPlaybackPhase, type SessionState, type SwingState } from '../../hooks/useMetronomeEngine';
-import { MedallionGlyph } from '../Dashboard/MedallionIcon';
+import { MEDALLION_BADGE_RADIUS, MedallionGlyph } from '../Dashboard/MedallionIcon';
 import { MedallionPicker } from './MedallionPicker';
 
 /** BPM change per pixel dragged — tuned so the full rod's on-screen length
@@ -295,31 +295,32 @@ const BAGEL_HOLE_RY = 4;
 const BAGEL_COLOR = '#c9924f';
 /** Scale factor for MedallionGlyph's fixed 0..100 local viewBox onto the
  * pendant's real (400-unit) coordinate space, applied via
- * translate(cx,cy) scale(s) translate(-50,-50) — SVG transforms compose
- * right-to-left: re-center the glyph's local (50,50) origin to (0,0)
- * first, then scale, then move to the real pendant position.
+ * translate(cx,cy) scale(s) translate(-50, -(50 - MEDALLION_BADGE_RADIUS))
+ * — SVG transforms compose right-to-left: first re-center the badge
+ * circle's own TOP point (local (50, 50 - MEDALLION_BADGE_RADIUS)) to
+ * (0,0), then scale, then move to the real pendant position (PIVOT.x,
+ * tipY). Anchoring by the badge's top — not the glyph's own local
+ * center — is what guarantees every medallion hangs from the exact same
+ * point regardless of its own (often asymmetric) silhouette: the badge
+ * circle is geometrically identical for all 15 medallions, even though
+ * their glyphs individually are not. See MEDALLION_BADGE_RADIUS's own
+ * doc comment in MedallionIcon.tsx.
  *
- * Most glyphs' effective bounding radius from their local center is
- * ~27-32 units. At scale 0.65 those land at real radius ~18-22 —
- * comfortably bigger than the old 13px charm (previously only ~6.5-unit
- * radius, i.e. the pendant used to be roughly 3x too small to easily
- * eye-track) and in the same ballpark as TempoWeight's own shapes
- * (~15-23 SVG units).
- *
- * Not normalized across glyphs — every glyph keeps its own honest
- * proportions. The largest (crescent-moon's offset cutout circle,
- * lightbulb, flame — each ~36-39 local units from center) land at
- * ~24.7-25.4 real units, which clears the ~39.8-unit margin from tipY to
- * the viewBox's bottom edge with room to spare regardless of which
- * medallion is equipped. */
+ * At scale 0.65 the badge's own real radius becomes
+ * MEDALLION_BADGE_RADIUS * 0.65 ≈ 30.55 — comfortably bigger than the old
+ * 13px charm (previously only ~6.5-unit radius, i.e. the pendant used to
+ * be roughly 3x too small to easily eye-track) and in the same ballpark
+ * as TempoWeight's own shapes (~15-23 SVG units). The badge is a fixed
+ * r=47 circle centered at local (50,50), so it clears the ~39.8-unit
+ * margin from tipY to the viewBox's bottom edge with room to spare. */
 const PENDANT_GLYPH_SCALE = 0.65;
 
-/** Invisible hit-target radius for the pendant — generous enough to
- * fully enclose even the largest glyphs, mirroring TempoWeight's
- * WEIGHT_HIT_RADIUS precedent. Critical for sparse glyphs (snowflake's
- * thin arms, the spiral/infinity band-orb glyphs) that would otherwise
- * be nearly unclickable outside their painted strokes. */
-const PENDANT_HIT_RADIUS = 28;
+/** Invisible hit-target radius for the pendant, sized to exactly match
+ * the badge circle's own real (post-scale) radius — the badge is now the
+ * pendant's true visual boundary for every medallion, so the click/tap
+ * target should match it precisely rather than use an arbitrary separate
+ * number. */
+const PENDANT_HIT_RADIUS = MEDALLION_BADGE_RADIUS * PENDANT_GLYPH_SCALE;
 /** Uniform invisible hit-target radius shared by all 5 weight shapes —
  * roughly the bagel's own equivalent-area radius, so every shape gets a
  * comparably generous grab area regardless of how thin its silhouette is
@@ -496,17 +497,6 @@ function Pendant({ medallionId, onTap, pendantRef }: PendantProps) {
       }}
     >
       <circle cx={PIVOT.x} cy={tipY} r={PENDANT_HIT_RADIUS} className="pendant-hit-target" />
-      {/* A short "bail" — the small link a real pendant hangs from —
-          bridging the rod's true endpoint into wherever the glyph sits.
-          Several glyphs (infinity's crossing point, the hourglass's
-          pinch, crescent-moon's off-center cutout, lightbulb's stroke-
-          only ring) have little or no painted material exactly at their
-          own local center, which is what gets pinned to tipY — without
-          this, those medallions can render with a visible gap between
-          the rod and the pendant. This is intentionally small and
-          rod-colored (not a big backing circle) so it still reads as
-          "the rod ending in a loop," not "an icon inside a dot." */}
-      <line x1={PIVOT.x} y1={tipY - 6} x2={PIVOT.x} y2={tipY + 6} className="pendant-link" />
       {/* Position and hover-zoom are deliberately split across two nested
           <g>s. Putting both the placement transform (an SVG ATTRIBUTE,
           computed by hand above) and a CSS `transform-origin`/hover
@@ -517,9 +507,19 @@ function Pendant({ medallionId, onTap, pendantRef }: PendantProps) {
           from its local (50,50) anchor. The outer <g> here does ONLY the
           positioning math and carries no CSS transform of its own; the
           inner .pendant-glyph is a plain (untransformed-by-attribute) <g>
-          that CSS is free to scale on hover without touching placement. */}
-      <g transform={`translate(${PIVOT.x} ${tipY}) scale(${PENDANT_GLYPH_SCALE}) translate(-50 -50)`}>
+          that CSS is free to scale on hover without touching placement.
+
+          Anchored to the badge circle's own TOP point, not the glyph's
+          local (50,50) center — every medallion's badge is geometrically
+          identical (a fixed r=MEDALLION_BADGE_RADIUS circle), so this is
+          what guarantees every pendant hangs from the exact same point
+          regardless of how asymmetric its own glyph silhouette is. This
+          also makes the badge itself double as the connector to the rod
+          — its top edge sits right at tipY — so the earlier separate
+          "bail" link line is no longer needed. */}
+      <g transform={`translate(${PIVOT.x} ${tipY}) scale(${PENDANT_GLYPH_SCALE}) translate(-50 ${-(50 - MEDALLION_BADGE_RADIUS)})`}>
         <g className="pendant-glyph">
+          <circle cx={50} cy={50} r={MEDALLION_BADGE_RADIUS} className="pendant-badge" stroke={color} />
           <MedallionGlyph id={medallionId} color={color} />
         </g>
       </g>

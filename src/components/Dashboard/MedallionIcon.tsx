@@ -71,6 +71,19 @@ function infinityPathD(cx: number, cy: number, scale: number, steps = 80): strin
 
 const LOCKED_COLOR = '#5b6472';
 
+/** Radius of the circular badge drawn behind every medallion's glyph, in
+ * the shared 0..100 local viewBox — exported so the pendant
+ * (MetronomeVisual.tsx) can reuse the exact same badge and, critically,
+ * anchor itself to the badge's own TOP point rather than to the glyph's
+ * local center. Every glyph's silhouette varies (some symmetric, some
+ * not — flame, crescent-moon, and the spiral orb all have a bounding-box
+ * center that differs from local (50,50)), but the badge circle is
+ * identical for all of them, so anchoring by "top of a fixed r=47 circle
+ * centered at (50,50)" is what actually guarantees every medallion hangs
+ * from the same consistent point, unlike anchoring by each glyph's own
+ * (inconsistent) geometry. */
+export const MEDALLION_BADGE_RADIUS = 47;
+
 function SnowflakeArm({ deg, color }: { deg: number; color: string }) {
   const rad = (deg * Math.PI) / 180;
   const cos = Math.cos(rad);
@@ -243,7 +256,7 @@ export function MedallionIcon({ id, size = 40, locked = false, className, title 
       <circle
         cx={50}
         cy={50}
-        r={47}
+        r={MEDALLION_BADGE_RADIUS}
         fill="rgba(8, 10, 20, 0.35)"
         stroke={color}
         strokeWidth={locked ? 2 : 2.5}

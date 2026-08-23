@@ -368,25 +368,30 @@ select:hover {
   cursor: pointer;
 }
 /* The pendant's visible shape is the medallion's own glyph geometry
-   (MedallionGlyph), rendered directly in native SVG at the arm's tip —
-   no uniform circle badge behind it, matching TempoWeight's own
-   no-badge, drop-shadow-glow convention. The glow uses --band-glow (the
-   live band) even though the glyph's own fill is the medallion's fixed
-   identity color — same split .tempo-weight-body already uses. */
+   (MedallionGlyph), rendered directly in native SVG at the arm's tip
+   inside a uniform circular badge (.pendant-badge) matching the same
+   MEDALLION_BADGE_RADIUS circle MedallionIcon draws in the picker/
+   dashboard grid — see MetronomeVisual.tsx's Pendant component for why
+   the badge (not the glyph) is what the positioning transform anchors
+   to. The glow uses --band-glow (the live band) even though the glyph's
+   own fill is the medallion's fixed identity color — same split
+   .tempo-weight-body already uses. */
 .pendant-glyph {
   filter: drop-shadow(0 0 8px var(--band-glow, rgba(167, 139, 250, 0.6)));
   transition: filter var(--dur-base) var(--ease-soft), transform var(--dur-fast) var(--ease-harmonic);
   transform-box: fill-box;
   transform-origin: center;
 }
-/* The short "bail" bridging the rod into the glyph — see its JSX
-   comment in MetronomeVisual.tsx. Same color as the rod itself
-   (.metronome-arm-line) so it reads as a continuation of it, not a
-   separate bead. */
-.pendant-link {
-  stroke: var(--band-color, #a78bfa);
-  stroke-width: 3;
-  stroke-linecap: round;
+/* Matches MedallionIcon's own badge circle styling exactly (same fill/
+   stroke-width/opacity) so the pendant looks like the same object the
+   picker/dashboard show — only `stroke` (the medallion's identity color)
+   is passed per-instance from the JSX. Its top edge sits right at the
+   rod's tip, so it also does the job the earlier separate "bail"
+   connector line used to (now removed). */
+.pendant-badge {
+  fill: rgba(8, 10, 20, 0.35);
+  stroke-width: 2.5;
+  opacity: 0.9;
   pointer-events: none;
 }
 .metronome-pendant:hover .pendant-glyph,
