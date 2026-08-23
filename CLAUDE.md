@@ -3,6 +3,52 @@
 This file is read automatically by Claude Code at the start of every session
 in this repo. Keep it up to date as decisions get made.
 
+## Status update — the pyramid tap box, actually fixed this time; a real Y-axis spin per band
+
+The previous session's `:focus-visible` fix for the pyramid's "weird
+white box" was INCOMPLETE, and the builder caught it — worth recording
+precisely why, since it's a genuinely easy trap to fall back into.
+
+**Root cause, confirmed by clicking it live and reading
+`document.activeElement`'s own computed style** (not re-guessed from a
+screenshot): `.eye-outer` had `outline: none` in its unconditional BASE
+rule from the start, so it was never affected. `.pyramid-hit-target` only
+had `outline: none` inside its `:focus-visible` override — and a plain
+mouse click on a custom `tabindex=0` SVG shape doesn't reliably get
+classified as `:focus-visible` by the browser's own heuristic (it's real
+`:focus`, just not "visible" `:focus`). When that heuristic doesn't
+match, NEITHER the page's `:focus-visible` rule NOR the generic
+`[tabindex]:focus-visible` rule applies — and nothing else on the page
+set `outline: none` for plain `:focus`, so the browser's own native
+default (`outline-style: auto`, a rectangle around the path's bounding
+box) rendered through. **Fix: `outline: none` moved to the UNCONDITIONAL
+base rule** for `.pyramid-hit-target` and `.metronome-pendant` (matching
+what `.eye-outer` already had), not just a `:focus-visible` override —
+this guarantees no native box ever appears regardless of which way the
+browser's heuristic goes on any given click. Verified via a real
+`page.mouse.click()` (not a synthetic `.click()`) followed by reading
+`getComputedStyle(document.activeElement).outlineStyle` — `"none"`, not
+`"auto"` — before calling it fixed.
+
+**The pyramid's tap flourish is now a real Y-axis spin, unique per
+band** — per the builder's own ask, replacing the old flat drop-shadow-
+only "ping." All four pyramid paths (hit-target, outline, base-edge,
+mouth) now share one wrapping `.pyramid-group` `<g>` so they spin
+together as one rigid body; `MOOD_BY_BAND` (`data/moods.ts`) gained
+`tapSpinTurns`/`tapSpinDurationSec`/`tapSpinEase` (delta: 1 slow lazy
+turn, soft ease; gamma: 4 fast turns, harmonic/springy ease — same
+personality curve as `breatheDurSec`/`maxFocusSec`/etc.), fed into a
+single shared `pyramid-spin` keyframe via CSS custom properties rather
+than a keyframe per band. `perspective: 900px` on `.metronome-svg` (the
+transformed element's own PARENT, per the CSS Transforms spec — it can't
+live on `.pyramid-group` itself) gives the rotation real foreshortening
+depth instead of a flat horizontal squash. Verified live across bands: the
+CSS vars matched each band's own numbers exactly, a `matrix3d` transform
+was genuinely present mid-animation (not just a static change), and a
+multi-frame sequence showed the wireframe pyramid correctly vanish to a
+thin sliver near 90°/270° and reappear on the far side — confirming an
+actual continuous 3D rotation, not a cosmetic trick.
+
 ## Status update — pyramid/eye flourishes: focus-ring bug, idle "boredom," particles, focus mode
 
 **Real bug, root-caused rather than guessed at: clicking the eye or the

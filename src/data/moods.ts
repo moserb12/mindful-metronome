@@ -17,6 +17,10 @@
 //   - maxFocusSec is read once (per band change) by the idle mouse-
 //     tracking effect in MetronomeVisual.tsx, to size its "how long before
 //     the eye gets bored and wanders on its own" timer.
+//   - tapSpinTurns/tapSpinDurationSec/tapSpinEase feed the pyramid's own
+//     tap flourish (a Y-axis spin) via CSS custom properties, the same
+//     "personality as a pure CSS knob" pattern breatheDurSec/breatheScale
+//     already use.
 //
 // Alpha is deliberately pinned to the app's ORIGINAL literal numbers
 // (5.5s breathe duration, 1.035 scale, plain sine easing via
@@ -51,12 +55,87 @@ export interface MoodProfile {
    * everything else here: calmer/slower bands are more patient, energized
    * ones get restless fast. */
   maxFocusSec: number;
+  /** Full Y-axis rotations the pyramid completes on tap. */
+  tapSpinTurns: number;
+  /** Duration of that spin, in seconds — also how long the tap-response
+   * state stays "active" (see handlePyramidTap in MetronomeVisual.tsx),
+   * so the CSS class clears exactly when the animation actually ends. */
+  tapSpinDurationSec: number;
+  /** Which of the app's two shared eases (:root's --ease-soft/
+   * --ease-harmonic) the spin settles with — 'soft' for a plain
+   * decelerate-to-stop (calmer bands), 'harmonic' for a slight springy
+   * overshoot (energized bands) — same curve TempoWeight's own drag
+   * response and every hover/press transition in this app already use. */
+  tapSpinEase: 'soft' | 'harmonic';
 }
 
 export const MOOD_BY_BAND: Record<BrainwaveBand, MoodProfile> = {
-  delta: { breatheDurSec: 9.5, breatheScale: 1.02, easeHangTime: 0.85, waveAmplitudeMul: 1.6, waveSpeedMul: 0.6, wiggleMul: 0.5, maxFocusSec: 26 }, // sleepy: slow, heavy, big lazy undulation — most patient
-  theta: { breatheDurSec: 8.0, breatheScale: 1.03, easeHangTime: 0.65, waveAmplitudeMul: 1.3, waveSpeedMul: 0.8, wiggleMul: 0.75, maxFocusSec: 20 }, // chill / dreamy — drifts off eventually
-  alpha: { breatheDurSec: 7.0, breatheScale: 1.035, easeHangTime: 0.5, waveAmplitudeMul: 1.0, waveSpeedMul: 1.0, wiggleMul: 1.0, maxFocusSec: 15 }, // peaceful — today's exact baseline
-  beta: { breatheDurSec: 5.0, breatheScale: 1.05, easeHangTime: 0.3, waveAmplitudeMul: 0.85, waveSpeedMul: 1.3, wiggleMul: 1.3, maxFocusSec: 10 }, // happy / upbeat — a little antsy
-  gamma: { breatheDurSec: 3.5, breatheScale: 1.07, easeHangTime: 0.12, waveAmplitudeMul: 0.7, waveSpeedMul: 1.8, wiggleMul: 1.6, maxFocusSec: 6 }, // energized — can't sit still, least patient
+  // sleepy: slow, heavy, big lazy undulation — most patient, and a single
+  // slow lazy turn on tap, settling with a plain soft ease (no bounce).
+  delta: {
+    breatheDurSec: 9.5,
+    breatheScale: 1.02,
+    easeHangTime: 0.85,
+    waveAmplitudeMul: 1.6,
+    waveSpeedMul: 0.6,
+    wiggleMul: 0.5,
+    maxFocusSec: 26,
+    tapSpinTurns: 1,
+    tapSpinDurationSec: 1.3,
+    tapSpinEase: 'soft',
+  },
+  // chill / dreamy — drifts off eventually; a slow-ish double turn.
+  theta: {
+    breatheDurSec: 8.0,
+    breatheScale: 1.03,
+    easeHangTime: 0.65,
+    waveAmplitudeMul: 1.3,
+    waveSpeedMul: 0.8,
+    wiggleMul: 0.75,
+    maxFocusSec: 20,
+    tapSpinTurns: 2,
+    tapSpinDurationSec: 1.15,
+    tapSpinEase: 'soft',
+  },
+  // peaceful — today's exact baseline for every OTHER field; a clean,
+  // pleasant double turn with a touch of springy settle is the natural
+  // "default" spin character.
+  alpha: {
+    breatheDurSec: 7.0,
+    breatheScale: 1.035,
+    easeHangTime: 0.5,
+    waveAmplitudeMul: 1.0,
+    waveSpeedMul: 1.0,
+    wiggleMul: 1.0,
+    maxFocusSec: 15,
+    tapSpinTurns: 2,
+    tapSpinDurationSec: 0.95,
+    tapSpinEase: 'harmonic',
+  },
+  // happy / upbeat — a little antsy; a snappier triple turn.
+  beta: {
+    breatheDurSec: 5.0,
+    breatheScale: 1.05,
+    easeHangTime: 0.3,
+    waveAmplitudeMul: 0.85,
+    waveSpeedMul: 1.3,
+    wiggleMul: 1.3,
+    maxFocusSec: 10,
+    tapSpinTurns: 3,
+    tapSpinDurationSec: 0.75,
+    tapSpinEase: 'harmonic',
+  },
+  // energized — can't sit still, least patient; a fast four-turn flurry.
+  gamma: {
+    breatheDurSec: 3.5,
+    breatheScale: 1.07,
+    easeHangTime: 0.12,
+    waveAmplitudeMul: 0.7,
+    waveSpeedMul: 1.8,
+    wiggleMul: 1.6,
+    maxFocusSec: 6,
+    tapSpinTurns: 4,
+    tapSpinDurationSec: 0.6,
+    tapSpinEase: 'harmonic',
+  },
 };

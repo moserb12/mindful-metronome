@@ -285,6 +285,11 @@ select:hover {
   width: 100%;
   height: 100%;
   overflow: visible;
+  /* Gives .pyramid-group's rotateY tap-spin real foreshortening depth
+     (a vanishing point) instead of a flat horizontal squash — perspective
+     must live on the TRANSFORMED element's own parent, per the CSS
+     Transforms spec, so it's here rather than on .pyramid-group itself. */
+  perspective: 900px;
 }
 
 /* Ambient particles — a handful of small dots drifting slowly around the
@@ -331,6 +336,16 @@ select:hover {
   stroke: none;
   cursor: pointer;
   pointer-events: all;
+  /* Unconditional, not just under :focus-visible below — a plain mouse
+     click on a custom tabindex=0 SVG shape doesn't reliably get
+     classified as :focus-visible by the browser's own heuristic (unlike
+     .eye-outer, which had this from the start), so relying only on a
+     :focus-visible override left the browser's OWN native default focus
+     ring (outline-style: auto — a plain rectangle around the path's
+     bounding box, not its actual triangle shape) rendering on ordinary
+     clicks. Confirmed via a real click + reading document.activeElement's
+     computed outline-style, not guessed. */
+  outline: none;
 }
 .pyramid-outline {
   fill: none;
@@ -370,25 +385,40 @@ select:hover {
     filter: drop-shadow(0 0 7px var(--band-glow, transparent));
   }
 }
-/* One-shot tap flourish, layered on top of the always-on breathing glow
-   above — same "layer a one-shot on top of ambient motion" idea already
-   used for the tick "wiggle" on the pendulum arm. A direct response to a
-   user's own tap (not idle/ambient looping), so — like .tempo-weight's
-   hover/active transforms — it's intentionally NOT disabled under
-   prefers-reduced-motion. */
-@keyframes pyramid-ping {
+/* .pyramid-group wraps all four pyramid paths (hit-target, outline,
+   base-edge, mouth) so the tap-spin below rotates them together as one
+   rigid body. transform-box/transform-origin here are safe — this <g>
+   carries no SVG attribute transform of its own (see its JSX comment in
+   MetronomeVisual.tsx for why that matters). */
+.pyramid-group {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+/* One-shot tap flourish: a real Y-axis spin (not just a glow) — "each
+   vibe should have its own style of spin," per the builder's own ask —
+   layered on top of the always-on breathing glow above, same "one-shot
+   on top of ambient motion" idea the tick "wiggle" on the pendulum arm
+   already uses. --pyramid-spin-end/-dur/-ease come from MOOD_BY_BAND
+   (data/moods.ts) via MetronomeVisual's inline style, so a single shared
+   keyframe produces a different-feeling spin per band without needing a
+   keyframe per band. A direct response to a user's own tap (not idle/
+   ambient looping), so — like .tempo-weight's hover/active transforms —
+   it's intentionally NOT disabled under prefers-reduced-motion. */
+@keyframes pyramid-spin {
   0% {
+    transform: rotateY(0deg);
     filter: drop-shadow(0 0 0 transparent);
   }
   35% {
     filter: drop-shadow(0 0 22px var(--band-glow, rgba(167, 139, 250, 0.9)));
   }
   100% {
+    transform: rotateY(var(--pyramid-spin-end, 720deg));
     filter: drop-shadow(0 0 0 transparent);
   }
 }
-.pyramid-outline.pyramid-ping {
-  animation: pyramid-ping 0.6s var(--ease-harmonic) 1;
+.pyramid-group.pyramid-spin {
+  animation: pyramid-spin var(--pyramid-spin-dur, 0.9s) var(--pyramid-spin-ease, var(--ease-harmonic)) 1;
 }
 
 .metronome-arm-line {
@@ -465,6 +495,10 @@ select:hover {
 
 .metronome-pendant {
   cursor: pointer;
+  /* Unconditional — see .pyramid-hit-target's own comment on why an
+     override scoped only to :focus-visible isn't enough for a custom
+     tabindex=0 SVG element. */
+  outline: none;
 }
 /* The pendant's visible shape is the medallion's own glyph geometry
    (MedallionGlyph), rendered directly in native SVG at the arm's tip
@@ -535,21 +569,17 @@ select:hover {
   stroke-width: 2;
 }
 .pyramid-hit-target:focus-visible {
-  outline: none;
   stroke: var(--band-color, #a78bfa);
   stroke-width: 2;
 }
-/* The pendant already gets its own shape-correct focus treatment (the
-   glow+scale on .pendant-glyph, right below) — this just removes the
-   SAME redundant rectangular box the eye/pyramid had, which would
-   otherwise sit on top of that and look like visual noise. */
-.metronome-pendant:focus-visible {
-  outline: none;
-}
+/* The pendant already gets its own shape-correct focus treatment via the
+   glow+scale on .pendant-glyph (see .metronome-pendant:hover/:focus-visible
+   .pendant-glyph below) — its own base rule's outline: none is what keeps
+   the native default box from sitting on top of that. */
 /* A quick squash-and-return "wink" on tap — touches only the outer ring's
    own transform, never the pupil's cx/cy (those belong exclusively to the
    swing/mouse-tracking effects in MetronomeVisual.tsx). A direct response
-   to a user's own tap, so — same reasoning as .pyramid-ping above —
+   to a user's own tap, so — same reasoning as .pyramid-spin above —
    intentionally not disabled under prefers-reduced-motion. */
 @keyframes eye-wink {
   0%,

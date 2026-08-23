@@ -644,13 +644,21 @@ export function MetronomeVisual({
   const hasSession = sessionPhase !== 'idle';
 
   // Two small, purely decorative one-shot flourishes — tapping the pyramid
-  // outline or the eye's outer ring plays a brief animation via a toggled
-  // CSS class, timed out automatically. Neither touches the rAF loop above
-  // or the pupil-driving effects below: different elements/properties
-  // entirely (the pyramid's own filter, the eye-outer ring's own
-  // transform — never cx/cy, which only the swing/mouse-tracking/session-
-  // clock effects are allowed to touch), so there's nothing for them to
-  // conflict with.
+  // or the eye's outer ring plays a brief animation via a toggled CSS
+  // class, timed out automatically. Neither touches the rAF loop above or
+  // the pupil-driving effects below: different elements/properties
+  // entirely (the pyramid group's own transform/filter, the eye-outer
+  // ring's own transform — never cx/cy, which only the swing/mouse-
+  // tracking/session-clock effects are allowed to touch), so there's
+  // nothing for them to conflict with.
+  //
+  // The pyramid's tap flourish is a Y-axis spin (replacing an earlier
+  // flat drop-shadow-only "ping"), and — per the builder's own ask —
+  // each band gets its own style of spin: MOOD_BY_BAND's tapSpinTurns/
+  // tapSpinDurationSec/tapSpinEase (data/moods.ts) drive the CSS custom
+  // properties the pyramid-spin keyframe reads, so a sleepy delta tap is
+  // one slow lazy turn and a gamma tap is a fast four-turn flurry, without
+  // needing a different keyframe per band.
   const [pyramidPinging, setPyramidPinging] = useState(false);
   const pyramidPingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [eyeWinking, setEyeWinking] = useState(false);
@@ -659,7 +667,10 @@ export function MetronomeVisual({
   function handlePyramidTap() {
     if (pyramidPingTimeoutRef.current) clearTimeout(pyramidPingTimeoutRef.current);
     setPyramidPinging(true);
-    pyramidPingTimeoutRef.current = setTimeout(() => setPyramidPinging(false), 600);
+    // Matches the CURRENT band's own spin duration (read via mood, not a
+    // fixed number) so the class clears exactly when that band's
+    // animation actually finishes, not a generic guess.
+    pyramidPingTimeoutRef.current = setTimeout(() => setPyramidPinging(false), mood.tapSpinDurationSec * 1000);
   }
 
   function handleEyeTap() {
@@ -1218,44 +1229,64 @@ export function MetronomeVisual({
           ))}
         </g>
 
-        {/* Invisible, geometry-only tap target — the full closed triangle,
-            same as this element used to be before its base edge was split
-            out into separate neutral/mouth paths below (see §4 of the
-            eye/mouth iteration plan). `pointer-events: all` on a CLOSED
-            path makes its whole interior clickable regardless of fill, but
-            that trick needs the closed geometry — the two now-open visible
-            side-paths below can't provide it on their own. */}
-        <path
-          d={`M ${PIVOT.x} 48 L ${BASE_RIGHT.x} ${BASE_RIGHT.y} L ${BASE_LEFT.x} ${BASE_LEFT.y} Z`}
-          className="pyramid-hit-target"
-          role="button"
-          tabIndex={0}
-          aria-label="Ping the pyramid"
-          onClick={handlePyramidTap}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' || e.key === ' ') {
-              e.preventDefault();
-              handlePyramidTap();
-            }
-          }}
-        />
-        <path
-          d={`M ${PIVOT.x} 48 L ${BASE_RIGHT.x} ${BASE_RIGHT.y} M ${PIVOT.x} 48 L ${BASE_LEFT.x} ${BASE_LEFT.y}`}
-          className={`pyramid-outline ${pyramidPinging ? 'pyramid-ping' : ''}`}
-          aria-hidden="true"
-        />
-        <path
-          d={`M ${BASE_LEFT.x} ${BASE_LEFT.y} L ${BASE_RIGHT.x} ${BASE_RIGHT.y}`}
-          className="pyramid-base-edge"
-          style={{ opacity: mouthVisible ? 0 : 1 }}
-          aria-hidden="true"
-        />
-        <path
-          d={MOUTH_SHAPES[mouthShape]}
-          className="pyramid-mouth"
-          style={{ opacity: mouthVisible ? 1 : 0 }}
-          aria-hidden="true"
-        />
+        {/* All four pyramid paths (the invisible hit-target plus the three
+            visible outline/base/mouth paths) share one wrapping <g> so the
+            tap-spin below rotates them together as one rigid body — see
+            handlePyramidTap's own doc comment for why the spin lives on
+            this group rather than on .pyramid-outline alone (the old
+            .pyramid-ping design). transform-box/transform-origin here are
+            safe: this <g> carries no SVG attribute transform of its own,
+            unlike the pendant-off-center bug elsewhere in this file's
+            history. */}
+        <g
+          className={`pyramid-group ${pyramidPinging ? 'pyramid-spin' : ''}`}
+          style={
+            {
+              '--pyramid-spin-end': `${mood.tapSpinTurns * 360}deg`,
+              '--pyramid-spin-dur': `${mood.tapSpinDurationSec}s`,
+              '--pyramid-spin-ease': mood.tapSpinEase === 'harmonic' ? 'var(--ease-harmonic)' : 'var(--ease-soft)',
+            } as React.CSSProperties
+          }
+        >
+          {/* Invisible, geometry-only tap target — the full closed triangle,
+              same as this element used to be before its base edge was split
+              out into separate neutral/mouth paths below (see §4 of the
+              eye/mouth iteration plan). `pointer-events: all` on a CLOSED
+              path makes its whole interior clickable regardless of fill, but
+              that trick needs the closed geometry — the two now-open visible
+              side-paths below can't provide it on their own. */}
+          <path
+            d={`M ${PIVOT.x} 48 L ${BASE_RIGHT.x} ${BASE_RIGHT.y} L ${BASE_LEFT.x} ${BASE_LEFT.y} Z`}
+            className="pyramid-hit-target"
+            role="button"
+            tabIndex={0}
+            aria-label="Spin the pyramid"
+            onClick={handlePyramidTap}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                handlePyramidTap();
+              }
+            }}
+          />
+          <path
+            d={`M ${PIVOT.x} 48 L ${BASE_RIGHT.x} ${BASE_RIGHT.y} M ${PIVOT.x} 48 L ${BASE_LEFT.x} ${BASE_LEFT.y}`}
+            className="pyramid-outline"
+            aria-hidden="true"
+          />
+          <path
+            d={`M ${BASE_LEFT.x} ${BASE_LEFT.y} L ${BASE_RIGHT.x} ${BASE_RIGHT.y}`}
+            className="pyramid-base-edge"
+            style={{ opacity: mouthVisible ? 0 : 1 }}
+            aria-hidden="true"
+          />
+          <path
+            d={MOUTH_SHAPES[mouthShape]}
+            className="pyramid-mouth"
+            style={{ opacity: mouthVisible ? 1 : 0 }}
+            aria-hidden="true"
+          />
+        </g>
 
         <NeuronCluster side="left" color={bandInfo.color} pulseToken={lastTickSide === 'left' ? `L${tickCount}` : 'L-idle'} />
         <NeuronCluster side="right" color={bandInfo.color} pulseToken={lastTickSide === 'right' ? `R${tickCount}` : 'R-idle'} />
