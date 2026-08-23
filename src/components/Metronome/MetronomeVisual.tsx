@@ -507,8 +507,21 @@ function Pendant({ medallionId, onTap, pendantRef }: PendantProps) {
           rod-colored (not a big backing circle) so it still reads as
           "the rod ending in a loop," not "an icon inside a dot." */}
       <line x1={PIVOT.x} y1={tipY - 6} x2={PIVOT.x} y2={tipY + 6} className="pendant-link" />
-      <g className="pendant-glyph" transform={`translate(${PIVOT.x} ${tipY}) scale(${PENDANT_GLYPH_SCALE}) translate(-50 -50)`}>
-        <MedallionGlyph id={medallionId} color={color} />
+      {/* Position and hover-zoom are deliberately split across two nested
+          <g>s. Putting both the placement transform (an SVG ATTRIBUTE,
+          computed by hand above) and a CSS `transform-origin`/hover
+          `transform: scale(...)` on the SAME element makes the browser
+          reinterpret the whole attribute transform relative to that
+          element's own fill-box — silently shifting the glyph away from
+          (PIVOT.x, tipY) by however far its bounding box happens to sit
+          from its local (50,50) anchor. The outer <g> here does ONLY the
+          positioning math and carries no CSS transform of its own; the
+          inner .pendant-glyph is a plain (untransformed-by-attribute) <g>
+          that CSS is free to scale on hover without touching placement. */}
+      <g transform={`translate(${PIVOT.x} ${tipY}) scale(${PENDANT_GLYPH_SCALE}) translate(-50 -50)`}>
+        <g className="pendant-glyph">
+          <MedallionGlyph id={medallionId} color={color} />
+        </g>
       </g>
     </g>
   );
