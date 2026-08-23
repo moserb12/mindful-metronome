@@ -1,15 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { BANDS, MAX_BPM, MIN_BPM, type BrainwaveBand } from '../../data/bands';
 import type { TickSubdivision } from '../../audio/binauralEngine';
+import type { MedallionId } from '../../data/medallions';
 import { MOOD_BY_BAND } from '../../data/moods';
 import { buildSmoothPath, clamp, pendulumEase, waveOffset } from '../../engine/motion';
-import { formatCountdown } from '../../format';
-import {
-  computeSwingSegment,
-  type SessionState,
-  type SessionPlaybackPhase,
-  type SwingState,
-} from '../../hooks/useMetronomeEngine';
+import { computeSwingSegment, type SessionPlaybackPhase, type SwingState } from '../../hooks/useMetronomeEngine';
+import { MedallionIcon } from '../Dashboard/MedallionIcon';
+import { MedallionPicker } from './MedallionPicker';
 
 /** BPM change per pixel dragged — tuned so the full rod's on-screen length
  * covers roughly the full BPM range in one drag. */
@@ -33,17 +30,6 @@ const BASE_WAVE_AMPLITUDE = 2.5;
  * layers don't currently share constants) so the off-beat accent reads
  * as visually "quieter" in lockstep with how it sounds quieter. */
 const CENTER_WIGGLE_SCALE = 0.55;
-/** Radius of the iris fill-wedge showing session time remaining against a
- * fixed 60-minute dial — see the wedge comment in the rAF loop below.
- * Reaches out to just inside the eye-outer ring (r=38) so it visibly
- * covers the tick marks (r=23-37) too, not just the iris disc. */
-const CLOCK_WEDGE_RADIUS = 36;
-/** The fixed reference the iris wedge is sized against — NOT the
- * session's own duration. Because SessionState.durationSec already equals
- * `minutes * 60`, `durationSec / HOUR_DIAL_SEC` alone lands exactly on
- * 0.25/0.5/0.75/1.0 at 15/30/45/60 minutes, with zero special-casing. */
-const HOUR_DIAL_SEC = 3600;
-
 // ============================================================================
 // MetronomeVisual — the "quantum metronome": an eye at the center of a
 // pyramid, two neuron clusters (one per hemisphere), and a pendulum arm
@@ -73,12 +59,13 @@ const HOUR_DIAL_SEC = 3600;
 // tab — audio panning needs to keep going regardless).
 //
 // The pupil ALWAYS tracks the pendulum's tip (or the cursor, while idle)
-// — it never stops doing that job, session or no session. While a timed
-// session is running, the IRIS itself becomes a fill-wedge showing time
-// remaining against a fixed 60-minute dial (a 15-min session starts
-// filled to exactly 1/4 and shrinks to nothing as it runs out, 30 min at
-// half, etc.), with a numeral readout alongside it — a separate visual
-// layer from the pupil, not a replacement for it.
+// — it never stops doing that job, session or no session. An earlier pass
+// also turned the iris itself into a session countdown (a fill-wedge +
+// numeral), but that's been removed per the builder's ask — the numeric
+// countdown lives in SessionTimer.tsx again instead. `sessionPhase` is
+// still threaded through (see the idle-tracking effect below), just not
+// `sessionRef`/`sessionRemainingSec` anymore — nothing else in this file
+// needs a live per-frame read of the session clock.
 // ============================================================================
 
 const VIEW = 400;
@@ -112,48 +99,6 @@ function angleToward(from: { x: number; y: number }, to: { x: number; y: number 
 const LEFT_ANGLE = angleToward(PIVOT, BASE_LEFT);
 const RIGHT_ANGLE = angleToward(PIVOT, BASE_RIGHT);
 const ARM_LENGTH = Math.hypot(BASE_LEFT.x - PIVOT.x, BASE_LEFT.y - PIVOT.y);
-
-/** A point at `radius` from EYE's center, `angleDeg` clockwise from 12
- * o'clock — the classic clock-face convention (0°=up, 90°=right), NOT the
- * `rotate()`-matrix convention `angleToward()` uses above. Deliberately
- * different, unrelated math for a deliberately different purpose (a
- * clock hand, not the pendulum's own rotation) — don't "reconcile" the
- * two sign conventions, they're solving different problems. */
-function clockPoint(angleDeg: number, radius: number): { x: number; y: number } {
-  const rad = (angleDeg * Math.PI) / 180;
-  return { x: EYE.x + radius * Math.sin(rad), y: EYE.y - radius * Math.cos(rad) };
-}
-
-/** Builds a filled pie-wedge `d` string spanning clockwise from 12 o'clock
- * to `sweepDeg` degrees, radius CLOCK_WEDGE_RADIUS — the iris timer's
- * fill. `sweepDeg` is `remainingSec / HOUR_DIAL_SEC * 360`, so the wedge
- * starts at the session's OWN fraction of the hour dial (a 15-min session
- * starts filled to exactly 1/4) and shrinks toward nothing as time runs
- * out, reaching 0 exactly when the session ends — the mirror image of
- * the 12 CLOCK_TICKS' own always-static hour-dial framing. Clamped just
- * under 360 because an SVG arc command can't represent a true full circle
- * (identical start/end points render as nothing, not a full circle). */
-function buildWedgePathD(sweepDeg: number): string {
-  const clamped = Math.max(0, Math.min(sweepDeg, 359.9));
-  const start = clockPoint(0, CLOCK_WEDGE_RADIUS);
-  const end = clockPoint(clamped, CLOCK_WEDGE_RADIUS);
-  const largeArc = clamped > 180 ? 1 : 0;
-  return `M ${EYE.x} ${EYE.y} L ${start.x} ${start.y} A ${CLOCK_WEDGE_RADIUS} ${CLOCK_WEDGE_RADIUS} 0 ${largeArc} 1 ${end.x} ${end.y} Z`;
-}
-
-/** 12 static clock-face tick marks, precomputed once at module load (same
- * pattern as LEFT_ANGLE/RIGHT_ANGLE) — a ring between the iris (r=22) and
- * the outer eye (r=38). Every 3rd mark (12/3/6/9) is longer/closer-in for
- * a classic clock read. Always present in the DOM; visibility is a CSS
- * opacity transition on the parent `.has-session` class, not a JSX
- * mount/unmount, so it fades rather than pops. */
-const CLOCK_TICKS = Array.from({ length: 12 }, (_, i) => {
-  const angleDeg = i * 30;
-  const major = i % 3 === 0;
-  const inner = clockPoint(angleDeg, major ? 23 : 25);
-  const outer = clockPoint(angleDeg, major ? 37 : 35);
-  return { x1: inner.x, y1: inner.y, x2: outer.x, y2: outer.y, major };
-});
 
 /** Four mouth expressions for the pyramid's base-edge flourish (see the
  * mouth-scheduling effect below) — each a single quadratic Bezier with
@@ -228,9 +173,7 @@ function NeuronCluster({ side, color, pulseToken }: NeuronClusterProps) {
 /** How far the pupil can drift from the iris's center while tracking the
  * pendulum or the cursor, in SVG units. Iris radius is 22, pupil radius 9
  * — this keeps the pupil comfortably inside the iris at full deflection.
- * The pupil ALWAYS does this job now, session or no session — the timed-
- * session readout lives entirely in the iris fill-ring instead (see
- * CLOCK_RING_RADIUS). */
+ * The pupil ALWAYS does this job, session or no session. */
 const PUPIL_MAX_OFFSET = 10;
 
 /** Where along the rod the weight can slide, in SVG units from the pivot.
@@ -242,30 +185,65 @@ const WEIGHT_MAX_OFFSET = ARM_LENGTH - 30;
 interface TempoWeightProps {
   bpm: number;
   onSetBpm: (bpm: number) => void;
-  color: string;
+  medallionId: MedallionId;
+  onTap: () => void;
 }
 
+/** A pointer has to move less than this many CSS pixels between down and up
+ * to count as a "tap" (opens the medallion picker) rather than the start of
+ * a drag (changes tempo) — see handlePointerDown below. */
+const TAP_MOVE_THRESHOLD_PX = 5;
+
+/** Builds the "outer minus hole" compound path for the bagel body — two
+ * full-ellipse subpaths combined under `fill-rule: evenodd`, the same
+ * technique MedallionIcon.tsx uses for the crescent moon. This is what
+ * makes the hole a genuine cutout (the rod line and, through it, whatever's
+ * behind show through) rather than a same-color circle just painted on
+ * top. */
+function ellipseSubpath(cx: number, cy: number, rx: number, ry: number): string {
+  return `M ${cx - rx} ${cy} A ${rx} ${ry} 0 1 0 ${cx + rx} ${cy} A ${rx} ${ry} 0 1 0 ${cx - rx} ${cy} Z`;
+}
+
+/** Fixed "seed" positions scattered on the bagel's surface — a handful of
+ * small offsets from center, chosen by hand to sit on the dough and clear
+ * of the hole, not generated per-render, so the bagel doesn't re-sprinkle
+ * itself on every re-render. */
+const BAGEL_SEEDS: [number, number][] = [
+  [-11, -5],
+  [-5, -8.5],
+  [3, -8.5],
+  [10, -5.5],
+  [-9, 5.5],
+  [9, 6],
+  [0, 8.5],
+];
+
+const BAGEL_RX = 17;
+const BAGEL_RY = 11;
+const BAGEL_HOLE_RX = 6.5;
+const BAGEL_HOLE_RY = 4;
+const BAGEL_COLOR = '#c9924f';
+const MEDALLION_CHARM_SIZE = 13;
+
 /**
- * A draggable weight on the pendulum rod, exactly like a real mechanical
- * metronome: slide it toward the pivot for a faster tempo, toward the tip
- * for slower — a shorter effective pendulum swings faster. Rendered as a
- * child of the arm's rotating <g>, so it swings with the pendulum for free
- * (SVG nested transforms compose) without any extra per-frame code.
+ * The weight on the pendulum rod — dragging it slides it along the rod
+ * exactly like a real mechanical metronome (toward the pivot for a faster
+ * tempo, toward the tip for slower), and it's shaped like a bagel: a nice
+ * practical fit, since a bagel already HAS a hole to mount a medallion
+ * charm in. A quick tap (as opposed to a drag) opens the medallion picker
+ * instead of touching tempo — see TAP_MOVE_THRESHOLD_PX below for how
+ * those two gestures are told apart from the same onPointerDown handler.
  *
- * Deliberately positioned on the rod's STRAIGHT center axis, ignoring the
- * snake-wave offset applied to the rod's own rendering (see the rAF loop
- * below) — the weight is a rigid physical slider, not part of the thin
- * rod's own resonance, so it stays put regardless of how wavy the string
- * looks around it.
- *
- * Drag math deliberately ignores the rod's current rotation: it just reads
- * vertical pointer movement (up = faster, down = slower) rather than
- * projecting onto the rod's live angle. That's simpler and just as usable
- * — the rod is swinging while playing, so "grab the exact rotated axis"
- * would fight the animation instead of feeling natural.
+ * Rendered as a child of the arm's rotating <g>, so both the bagel and its
+ * medallion swing with the pendulum for free (SVG nested transforms
+ * compose) — no extra per-frame code needed. Deliberately positioned on
+ * the rod's STRAIGHT center axis, ignoring the snake-wave offset applied
+ * to the rod's own rendering (see the rAF loop below) — the weight is a
+ * rigid physical slider, not part of the thin rod's own resonance, so it
+ * stays put regardless of how wavy the string looks around it.
  */
-function TempoWeight({ bpm, onSetBpm, color }: TempoWeightProps) {
-  const dragState = useRef<{ startClientY: number; startBpm: number } | null>(null);
+function TempoWeight({ bpm, onSetBpm, medallionId, onTap }: TempoWeightProps) {
+  const dragState = useRef<{ startClientX: number; startClientY: number; startBpm: number; moved: boolean } | null>(null);
 
   const t = (bpm - MIN_BPM) / (MAX_BPM - MIN_BPM);
   const offset = WEIGHT_MAX_OFFSET - t * (WEIGHT_MAX_OFFSET - WEIGHT_MIN_OFFSET);
@@ -273,15 +251,21 @@ function TempoWeight({ bpm, onSetBpm, color }: TempoWeightProps) {
 
   function handlePointerDown(e: React.PointerEvent) {
     e.stopPropagation();
-    dragState.current = { startClientY: e.clientY, startBpm: bpm };
+    dragState.current = { startClientX: e.clientX, startClientY: e.clientY, startBpm: bpm, moved: false };
 
     function handleMove(ev: PointerEvent) {
       if (!dragState.current) return;
       const deltaY = dragState.current.startClientY - ev.clientY; // up = positive
+      const totalMove = Math.hypot(ev.clientX - dragState.current.startClientX, ev.clientY - dragState.current.startClientY);
+      if (totalMove > TAP_MOVE_THRESHOLD_PX) dragState.current.moved = true;
       const nextBpm = Math.round(dragState.current.startBpm + deltaY * DRAG_SENSITIVITY);
       onSetBpm(Math.min(MAX_BPM, Math.max(MIN_BPM, nextBpm)));
     }
     function handleUp() {
+      // Only treat this as a tap-to-open-picker if the pointer never moved
+      // past the threshold — otherwise every drag would also toggle the
+      // picker open the instant it's released.
+      if (dragState.current && !dragState.current.moved) onTap();
       dragState.current = null;
       window.removeEventListener('pointermove', handleMove);
       window.removeEventListener('pointerup', handleUp);
@@ -291,9 +275,56 @@ function TempoWeight({ bpm, onSetBpm, color }: TempoWeightProps) {
   }
 
   return (
-    <g className="tempo-weight" onPointerDown={handlePointerDown} style={{ cursor: 'grab' }}>
-      <rect x={PIVOT.x - 11} y={weightY - 7} width={22} height={14} rx={4} fill={color} className="tempo-weight-body" />
-      <line x1={PIVOT.x - 11} y1={weightY} x2={PIVOT.x + 11} y2={weightY} className="tempo-weight-notch" />
+    <g
+      className="tempo-weight"
+      onPointerDown={handlePointerDown}
+      style={{ cursor: 'grab' }}
+      role="button"
+      tabIndex={0}
+      aria-label="Metronome weight — drag to change tempo, or tap to change medallion"
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onTap();
+        }
+      }}
+    >
+      {/* A transparent-but-PAINTED (not `fill: none`) full-oval hit target,
+          separate from the visible bagel body below. The bagel body is an
+          evenodd path with a genuinely carved-out hole (see
+          ellipseSubpath()) — `pointer-events: all` on that path still
+          respects the fill-rule's actual geometry, so the hole itself
+          would stay a dead zone even with `all` set. Since the medallion
+          charm sits exactly in that hole, it's the single most likely spot
+          someone taps — this ellipse covers the whole outer oval, hole
+          included, so a tap anywhere on the bagel (charm included)
+          registers. */}
+      <ellipse cx={PIVOT.x} cy={weightY} rx={BAGEL_RX} ry={BAGEL_RY} className="tempo-weight-hit-target" />
+      <path
+        className="tempo-weight-body"
+        fillRule="evenodd"
+        d={`${ellipseSubpath(PIVOT.x, weightY, BAGEL_RX, BAGEL_RY)} ${ellipseSubpath(PIVOT.x, weightY, BAGEL_HOLE_RX, BAGEL_HOLE_RY)}`}
+        fill={BAGEL_COLOR}
+      />
+      <ellipse
+        cx={PIVOT.x}
+        cy={weightY - BAGEL_RY * 0.45}
+        rx={BAGEL_RX * 0.68}
+        ry={BAGEL_RY * 0.32}
+        className="tempo-weight-glaze"
+      />
+      {BAGEL_SEEDS.map(([dx, dy], i) => (
+        <ellipse key={i} cx={PIVOT.x + dx} cy={weightY + dy} rx={1.1} ry={0.65} className="tempo-weight-seed" />
+      ))}
+      <foreignObject
+        x={PIVOT.x - MEDALLION_CHARM_SIZE / 2}
+        y={weightY - MEDALLION_CHARM_SIZE / 2}
+        width={MEDALLION_CHARM_SIZE}
+        height={MEDALLION_CHARM_SIZE}
+        className="tempo-weight-charm"
+      >
+        <MedallionIcon id={medallionId} size={MEDALLION_CHARM_SIZE} />
+      </foreignObject>
     </g>
   );
 }
@@ -308,25 +339,20 @@ interface MetronomeVisualProps {
   tickCount: number;
   bpm: number;
   onSetBpm: (bpm: number) => void;
-  /** Raw session reference (or null when no timed session is armed) — read
-   * DIRECTLY inside the rAF loop every frame, exactly like `swingRef`,
-   * rather than relying on the 250ms-polled `sessionPhase`/
-   * `sessionRemainingSec` React state. This sidesteps a
-   * real staleness risk: `sessionRef.current` can flip from null to a
-   * real session (or back) WHILE isPlaying stays true (e.g. picking a
-   * duration mid-play), which would NOT re-run this effect since
-   * `isPlaying` didn't change — a value captured only in the effect's own
-   * closure would go stale in that case, but a ref's `.current` is always
-   * fresh no matter when it's read. */
-  sessionRef: React.RefObject<SessionState | null>;
   sessionPhase: SessionPlaybackPhase;
-  sessionRemainingSec: number | null;
   /** Which tick(s) are currently audible — see TickSubdivision's doc
    * comment in binauralEngine.ts. Drives which of the arm's two wiggle
    * accents (end-arrival, center-crossing) are active — see the
    * `tickSubdivisionRef` comment in the rAF loop below for why this is
    * read via a ref rather than a plain closed-over prop. */
   tickSubdivision: TickSubdivision;
+  /** Which medallion currently sits in the bagel weight's hole. */
+  selectedMedallionId: MedallionId;
+  /** Every medallion the listener has actually earned — see
+   * engine/growth.ts's computeUnlockedMedallions(). The picker only ever
+   * offers a choice from this list. */
+  unlockedMedallionIds: MedallionId[];
+  onSelectMedallion: (id: MedallionId) => void;
 }
 
 export function MetronomeVisual({
@@ -339,15 +365,15 @@ export function MetronomeVisual({
   tickCount,
   bpm,
   onSetBpm,
-  sessionRef,
   sessionPhase,
-  sessionRemainingSec,
   tickSubdivision,
+  selectedMedallionId,
+  unlockedMedallionIds,
+  onSelectMedallion,
 }: MetronomeVisualProps) {
   const armRef = useRef<SVGGElement | null>(null);
   const armPathRef = useRef<SVGPathElement | null>(null);
   const pupilRef = useRef<SVGCircleElement | null>(null);
-  const wedgeRef = useRef<SVGPathElement | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const smoothedRef = useRef<number[] | null>(null);
@@ -406,6 +432,19 @@ export function MetronomeVisual({
     eyeWinkTimeoutRef.current = setTimeout(() => setEyeWinking(false), 250);
   }
 
+  // The medallion picker is plain HTML rendered BELOW the SVG, not inside
+  // it — the weight itself lives inside the arm's rotating <g>, and a
+  // picker popover that rotated with the pendulum mid-swing would be
+  // unusable. Tapping the weight (see TempoWeight's onTap) just flips this
+  // boolean; the popover's own position is fixed relative to the visual,
+  // independent of wherever the bagel currently is on its swing.
+  const [medallionPickerOpen, setMedallionPickerOpen] = useState(false);
+
+  function handleSelectMedallion(id: MedallionId) {
+    onSelectMedallion(id);
+    setMedallionPickerOpen(false);
+  }
+
   useEffect(() => {
     return () => {
       if (pyramidPingTimeoutRef.current) clearTimeout(pyramidPingTimeoutRef.current);
@@ -449,10 +488,9 @@ export function MetronomeVisual({
 
   // Pyramid mouth flourish: the base edge occasionally, briefly reads as a
   // mouth (smile/sigh/smirk/consider), cross-faded in via opacity rather
-  // than true path morphing — matches this file's existing convention for
-  // the eye-clock-* fades, no extra libraries needed. Runs whether playing
-  // or idle (per the builder — this one's ongoing character, not an idle
-  // tell like the blink above).
+  // than true path morphing. Runs whether playing or idle (per the
+  // builder — this one's ongoing character, not an idle tell like the
+  // blink above).
   const [mouthShape, setMouthShape] = useState<keyof typeof MOUTH_SHAPES>('smile');
   const [mouthVisible, setMouthVisible] = useState(false);
   useEffect(() => {
@@ -684,22 +722,6 @@ export function MetronomeVisual({
       // iris fill-ring below, not in the pupil.
       setPupilFromAngle(totalAngle);
 
-      // Iris fill-wedge: read `sessionRef.current` directly (fresh every
-      // frame, see the prop's doc comment above) rather than the polled
-      // `sessionPhase` prop. Starts filled to the session's OWN fraction
-      // of the hour dial (durationSec/HOUR_DIAL_SEC — a 15-min session
-      // starts at exactly 1/4) and shrinks as remainingSec counts down,
-      // reaching empty exactly when the session ends — the builder wants
-      // to read "how much time is left" directly off the wedge shrinking,
-      // not a fill growing toward some eventual size.
-      const session = sessionRef.current;
-      if (session && wedgeRef.current) {
-        const elapsedSec = now - session.startTimeSec;
-        const remainingSec = Math.max(0, session.durationSec - elapsedSec);
-        const sweepDeg = clamp(remainingSec / HOUR_DIAL_SEC, 0, 1) * 360;
-        wedgeRef.current.setAttribute('d', buildWedgePathD(sweepDeg));
-      }
-
       drawWaveform();
       rafRef.current = requestAnimationFrame(frame);
     }
@@ -838,8 +860,6 @@ export function MetronomeVisual({
     };
   }, [isPlaying, sessionPhase]);
 
-  const hasSession = sessionPhase !== 'idle';
-
   return (
     <div
       className="metronome-visual"
@@ -905,12 +925,17 @@ export function MetronomeVisual({
         <g ref={armRef} className="metronome-arm">
           <path ref={armPathRef} className="metronome-arm-line" d={`M ${PIVOT.x} ${PIVOT.y} L ${PIVOT.x} ${PIVOT.y + ARM_LENGTH}`} />
           <circle cx={PIVOT.x} cy={PIVOT.y + ARM_LENGTH} r={7} className="metronome-arm-tip" />
-          <TempoWeight bpm={bpm} onSetBpm={onSetBpm} color={bandInfo.color} />
+          <TempoWeight
+            bpm={bpm}
+            onSetBpm={onSetBpm}
+            medallionId={selectedMedallionId}
+            onTap={() => setMedallionPickerOpen((open) => !open)}
+          />
         </g>
 
         <circle cx={PIVOT.x} cy={PIVOT.y} r={5} className="metronome-pivot-dot" />
 
-        <g className={`metronome-eye ${hasSession ? 'has-session' : ''} ${blinking ? 'eye-blink' : ''}`}>
+        <g className={`metronome-eye ${blinking ? 'eye-blink' : ''}`}>
           <circle
             cx={EYE.x}
             cy={EYE.y}
@@ -928,28 +953,18 @@ export function MetronomeVisual({
             }}
           />
           <circle cx={EYE.x} cy={EYE.y} r={22} className="eye-iris" />
-          <g className="eye-clock-ticks" aria-hidden="true">
-            {CLOCK_TICKS.map((tick, i) => (
-              <line
-                key={i}
-                x1={tick.x1}
-                y1={tick.y1}
-                x2={tick.x2}
-                y2={tick.y2}
-                className={`eye-clock-tick ${tick.major ? 'eye-clock-tick-major' : ''}`}
-              />
-            ))}
-          </g>
-          <path ref={wedgeRef} className="eye-clock-wedge" d={buildWedgePathD(0)} aria-hidden="true" />
           <circle ref={pupilRef} cx={EYE.x} cy={EYE.y} r={9} className="eye-pupil" />
-          {hasSession && (
-            <text x={EYE.x} y={EYE.y + 13} textAnchor="middle" dominantBaseline="central" className="eye-clock-text">
-              {formatCountdown(sessionRemainingSec ?? 0)}
-            </text>
-          )}
         </g>
       </svg>
-      <p className="tempo-weight-hint">Drag the weight — {bpm} BPM</p>
+      <p className="tempo-weight-hint">Drag the bagel to change tempo, tap it to swap medallions — {bpm} BPM</p>
+      {medallionPickerOpen && (
+        <MedallionPicker
+          unlockedIds={unlockedMedallionIds}
+          selectedId={selectedMedallionId}
+          onSelect={handleSelectMedallion}
+          onClose={() => setMedallionPickerOpen(false)}
+        />
+      )}
     </div>
   );
 }

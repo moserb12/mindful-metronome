@@ -1,0 +1,64 @@
+import { useEffect, useRef } from 'react';
+import { MEDALLIONS_BY_ID, type MedallionId } from '../../data/medallions';
+import { MedallionIcon } from '../Dashboard/MedallionIcon';
+
+interface MedallionPickerProps {
+  unlockedIds: MedallionId[];
+  selectedId: MedallionId;
+  onSelect: (id: MedallionId) => void;
+  onClose: () => void;
+}
+
+/**
+ * A small popover opened by tapping the bagel weight — lets a listener
+ * swap which unlocked medallion sits in the middle of it without leaving
+ * the metronome. Deliberately only lists what's ALREADY unlocked (the full
+ * collection, including locked ones and their unlock requirements, lives
+ * in the Focus Garden dashboard below) — this is a quick swap tool, not a
+ * second copy of the whole collection screen.
+ */
+export function MedallionPicker({ unlockedIds, selectedId, onSelect, onClose }: MedallionPickerProps) {
+  const panelRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    function handlePointerDown(e: PointerEvent) {
+      if (panelRef.current && !panelRef.current.contains(e.target as Node)) onClose();
+    }
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose();
+    }
+    document.addEventListener('pointerdown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [onClose]);
+
+  return (
+    <div className="medallion-picker" ref={panelRef} role="dialog" aria-label="Choose a medallion">
+      <div className="medallion-picker-header">
+        <span>Choose a medallion</span>
+        <button type="button" className="medallion-picker-close" onClick={onClose} aria-label="Close">
+          ×
+        </button>
+      </div>
+      <div className="medallion-picker-row">
+        {unlockedIds.map((id) => (
+          <button
+            key={id}
+            type="button"
+            className={`medallion-picker-item ${id === selectedId ? 'selected' : ''}`}
+            onClick={() => onSelect(id)}
+            title={MEDALLIONS_BY_ID[id].name}
+          >
+            <MedallionIcon id={id} size={34} />
+          </button>
+        ))}
+      </div>
+      {unlockedIds.length <= 1 && (
+        <p className="medallion-picker-hint">Keep practicing — new medallions unlock in your Focus Garden below.</p>
+      )}
+    </div>
+  );
+}

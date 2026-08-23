@@ -1,3 +1,4 @@
+import { formatCountdown } from '../../format';
 import type { SessionPlaybackPhase } from '../../hooks/useMetronomeEngine';
 
 const DURATION_OPTIONS: { minutes: number | null; label: string }[] = [
@@ -21,6 +22,7 @@ const IN_SESSION_MESSAGE: Record<Exclude<SessionPlaybackPhase, 'idle'>, string> 
 interface SessionTimerProps {
   sessionDurationMinutes: number | null;
   sessionPhase: SessionPlaybackPhase;
+  sessionRemainingSec: number | null;
   isPlaying: boolean;
   onSetSessionDurationMinutes: (minutes: number | null) => void;
   chipColor: string;
@@ -36,9 +38,10 @@ interface SessionTimerProps {
  * comment in useMetronomeEngine.ts). One play control for the whole app,
  * not a second competing one here.
  *
- * The big numeric countdown used to live here too — it now lives INSIDE
- * the eye itself (MetronomeVisual.tsx's clock face), so this component
- * only needs the chips plus a short status line.
+ * The numeric mm:ss countdown lives here again — an earlier pass moved it
+ * into the eye itself as a fill-wedge/numeral, but that iris-timer ring
+ * was removed per the builder's ask, so this is once again the only place
+ * a listener can see exactly how much session time is left.
  *
  * Visibility of the status line is driven by `sessionPhase !== 'idle'`,
  * NOT by `isPlaying` — a natural session end sets `isPlaying` back to
@@ -50,6 +53,7 @@ interface SessionTimerProps {
 export function SessionTimer({
   sessionDurationMinutes,
   sessionPhase,
+  sessionRemainingSec,
   isPlaying,
   onSetSessionDurationMinutes,
   chipColor,
@@ -60,6 +64,7 @@ export function SessionTimer({
     : isPlaying
       ? 'Playing — Infinite, so it’ll keep going until you press Pause.'
       : 'Choose how long you’d like to focus, then press Begin above to start.';
+  const showCountdown = inSession && sessionPhase !== 'ended' && sessionRemainingSec !== null;
 
   return (
     <div className="session-timer">
@@ -75,6 +80,8 @@ export function SessionTimer({
           </button>
         ))}
       </div>
+
+      {showCountdown && <p className="session-countdown">{formatCountdown(sessionRemainingSec)}</p>}
 
       {inSession ? (
         <p className={`session-status session-status-${sessionPhase}`}>{message}</p>

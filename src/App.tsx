@@ -1,16 +1,19 @@
 import { useMetronomeEngine } from './hooks/useMetronomeEngine';
 import { useCustomPresets } from './hooks/useCustomPresets';
+import { useFocusStats } from './hooks/useFocusStats';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { MetronomeVisual } from './components/Metronome/MetronomeVisual';
 import { AcousticVisualizer } from './components/Metronome/AcousticVisualizer';
 import { ControlPanel } from './components/Metronome/ControlPanel';
 import { SessionTimer } from './components/Metronome/SessionTimer';
 import { BilateralComingSoonBanner } from './components/BilateralComingSoonBanner';
+import { FocusDashboard } from './components/Dashboard/FocusDashboard';
 import { BANDS } from './data/bands';
 
 export default function App() {
   const engine = useMetronomeEngine();
   const customPresetsHook = useCustomPresets();
+  const focusStats = useFocusStats(engine.isPlaying, engine.band);
   const bandInfo = BANDS[engine.band];
 
   function handleSaveCustomPreset(name: string) {
@@ -61,10 +64,11 @@ export default function App() {
           tickCount={engine.tickCount}
           bpm={engine.bpm}
           onSetBpm={engine.setBpm}
-          sessionRef={engine.sessionRef}
           sessionPhase={engine.sessionPhase}
-          sessionRemainingSec={engine.sessionRemainingSec}
           tickSubdivision={engine.tickSubdivision}
+          selectedMedallionId={focusStats.selectedMedallionId}
+          unlockedMedallionIds={focusStats.unlockedIds}
+          onSelectMedallion={focusStats.setSelectedMedallionId}
         />
 
         <div className="stage-readout">
@@ -79,6 +83,7 @@ export default function App() {
         <SessionTimer
           sessionDurationMinutes={engine.sessionDurationMinutes}
           sessionPhase={engine.sessionPhase}
+          sessionRemainingSec={engine.sessionRemainingSec}
           isPlaying={engine.isPlaying}
           onSetSessionDurationMinutes={engine.setSessionDurationMinutes}
           chipColor={bandInfo.color}
@@ -120,6 +125,19 @@ export default function App() {
       </main>
 
       <BilateralComingSoonBanner />
+
+      <FocusDashboard
+        totalMinutes={focusStats.totalMinutes}
+        totalSecondsByBand={focusStats.stats.totalSecondsByBand}
+        streak={focusStats.streak}
+        growth={focusStats.growth}
+        treeStage={focusStats.treeStage}
+        unlockedIds={focusStats.unlockedIds}
+        selectedMedallionId={focusStats.selectedMedallionId}
+        onSelectMedallion={focusStats.setSelectedMedallionId}
+        justUnlocked={focusStats.justUnlocked}
+        bandColor={bandInfo.color}
+      />
 
       <footer className="app-footer">
         <p>Headphones recommended for the binaural layer. Mindful Metronome is free — use it as much as you like.</p>

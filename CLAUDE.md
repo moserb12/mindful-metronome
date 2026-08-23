@@ -3,6 +3,68 @@
 This file is read automatically by Claude Code at the start of every session
 in this repo. Keep it up to date as decisions get made.
 
+## Status update — iris timer removed, gamification layer re-applied onto the real HEAD
+
+**Context: this pass replaces an earlier, mis-based delivery.** The
+gamification build below (medallions, growth engine, fractal tree, focus
+dashboard, bagel weight) was first built against a checkout that turned
+out to be 4 commits behind this repo's actual `main` — the "Focus
+Companion" pass (mood/physics rod, session clock, iris-timer ring,
+blink/mouth expressions) had already landed upstream and this session's
+earlier work never saw it. This entry documents the reconciliation: the
+iris timer's removal (an explicit builder request) plus a clean
+re-application of every gamification file onto the real current
+`MetronomeVisual.tsx`/`App.tsx`/`index.css`.
+
+**Iris timer ring removed.** The builder asked for the `.eye-clock-*`
+system (shrinking pie-wedge fill, 12 clock ticks, in-eye mm:ss numeral —
+see the OLDER status entry below for how that was built) taken back out
+of the eye entirely. Removed from `MetronomeVisual.tsx`: the
+`CLOCK_WEDGE_RADIUS`/`HOUR_DIAL_SEC` constants, `clockPoint()`,
+`buildWedgePathD()`, `CLOCK_TICKS`, the `wedgeRef`, the rAF loop's
+per-frame wedge-update block, the `hasSession` variable, and the
+`eye-clock-ticks`/`eye-clock-wedge`/`eye-clock-text` JSX (the plain
+`eye-pupil` circle between them stays — it still always tracks the
+pendulum/cursor, session or no session). The `sessionRef`/
+`sessionRemainingSec` props are gone from `MetronomeVisualProps`
+entirely; `sessionPhase` stays, since the idle mouse-tracking effect
+still guards on `sessionPhase === 'ended'`. Matching CSS block ("Eye
+clock face") and its `prefers-reduced-motion` references removed from
+`index.css`.
+
+**The numeric countdown moved back to `SessionTimer.tsx`.** Removing the
+ring would otherwise leave zero way to see exact time remaining (only a
+vague status line) — not something the builder asked for, but a
+deliberate call worth flagging: `sessionRemainingSec` is threaded back
+through `App.tsx` into `SessionTimer`, which now renders a `.session-countdown`
+mm:ss line (via the shared `formatCountdown()` in `format.ts`) above its
+existing status text, visible whenever a session is active and not yet
+`'ended'`.
+
+**Gamification layer re-applied cleanly onto the current base.** Ported
+unchanged: `data/medallions.ts`, `engine/growth.ts`(+test),
+`engine/fractalTree.ts`(+test), `storage/statsStorage.ts`(+test),
+`hooks/useFocusStats.ts`, `components/Dashboard/{MedallionIcon,
+FractalTree,FocusDashboard}.tsx`, `components/Metronome/MedallionPicker.tsx`
+— none of these touch the eye/session-clock system, so they needed no
+changes. Re-applied fresh: the bagel-shaped `TempoWeight` (evenodd
+"outer minus hole" compound path, hit-target ellipse fix, tap-vs-drag
+gesture split via `TAP_MOVE_THRESHOLD_PX`) alongside the CURRENT rod
+(mood/physics wave-rod, ramp-in/settle-tail) — the old base's
+`TempoWeight` was a plain rectangle since the Focus Companion pass never
+touched it. `App.tsx` wires `useFocusStats(engine.isPlaying, engine.band)`,
+passes `selectedMedallionId`/`unlockedMedallionIds`/`onSelectMedallion`
+into `MetronomeVisual`, and renders `<FocusDashboard>` between the
+`<BilateralComingSoonBanner>` and the footer.
+
+**Verification for this pass:** `tsc -b` clean, `vitest run` (9 files, 86
+tests, all passing), `vite build` clean, plus a live Playwright pass
+against the built preview — confirmed zero `[class*="eye-clock"]`
+elements remain in the DOM, the bagel weight renders with its medallion
+charm, tapping it opens the medallion picker, dragging it still changes
+BPM, the focus dashboard/fractal-tree/medallion-grid render, and the
+`.session-countdown` mm:ss readout appears during an active session.
+
 ## Status update — iris timer redesign, background-tab audio fixes, footer link
 
 **Iris timer now shrinks, not grows.** The builder wanted to read

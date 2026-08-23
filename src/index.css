@@ -312,27 +312,56 @@ select:hover {
 .tempo-weight {
   cursor: grab;
   touch-action: none;
+  /* The bagel body is a compound evenodd path with a genuine unpainted
+     hole cut into its middle (see ellipseSubpath() in
+     MetronomeVisual.tsx) — exactly where the medallion charm sits. With
+     the default `pointer-events: visiblePainted`, a tap landing in that
+     hole (i.e. right on the medallion itself, the single most likely spot
+     someone taps) would hit nothing and silently miss. `all` makes the
+     entire bagel — hole included — a real, reliable tap target regardless
+     of what's actually painted there. */
+  pointer-events: all;
 }
 .tempo-weight:active {
   cursor: grabbing;
 }
+/* The bagel body's fill is a fixed dough color (BAGEL_COLOR in
+   MetronomeVisual.tsx), not band-tinted like the old rectangular weight —
+   so there's no `fill` transition to declare here anymore. The
+   band-colored glow still comes through via --band-glow, cascading down
+   from .metronome-visual regardless. */
 .tempo-weight-body {
   filter: drop-shadow(0 0 6px var(--band-glow, rgba(167, 139, 250, 0.5)));
-  transition: fill var(--dur-slow) var(--ease-soft), filter var(--dur-base) var(--ease-soft), transform var(--dur-fast)
-      var(--ease-harmonic);
+  transition: filter var(--dur-base) var(--ease-soft), transform var(--dur-fast) var(--ease-harmonic);
   transform-box: fill-box;
   transform-origin: center;
 }
 .tempo-weight:hover .tempo-weight-body {
   filter: drop-shadow(0 0 11px var(--band-glow, rgba(167, 139, 250, 0.75)));
-  transform: scale(1.12);
+  transform: scale(1.1);
 }
 .tempo-weight:active .tempo-weight-body {
-  transform: scale(1.22);
+  transform: scale(1.16);
 }
-.tempo-weight-notch {
-  stroke: rgba(5, 5, 10, 0.4);
-  stroke-width: 1.5;
+.tempo-weight-hit-target {
+  fill: rgba(0, 0, 0, 0.001);
+  pointer-events: all;
+}
+.tempo-weight-glaze {
+  fill: rgba(255, 255, 255, 0.15);
+  pointer-events: none;
+}
+.tempo-weight-seed {
+  fill: rgba(255, 248, 228, 0.85);
+  pointer-events: none;
+}
+/* The medallion charm sits in a <foreignObject> nested in the same
+   rotating <g> as the bagel — pointer-events disabled so a click right
+   over the charm still hits the bagel's own onPointerDown (tap opens the
+   picker) instead of being swallowed by the icon's inner <svg>. */
+.tempo-weight-charm {
+  pointer-events: none;
+  overflow: visible;
 }
 .tempo-weight-hint {
   text-align: center;
@@ -417,53 +446,6 @@ select:hover {
   50% {
     transform: scale(var(--mood-breathe-scale, 1.035));
   }
-}
-
-/* ---------- Eye clock face (active while a timed session is running) ---------- */
-
-.eye-clock-ticks,
-.eye-clock-text {
-  opacity: 0;
-  transition: opacity var(--dur-slow) var(--ease-soft);
-  pointer-events: none;
-}
-.metronome-eye.has-session .eye-clock-ticks,
-.metronome-eye.has-session .eye-clock-text {
-  opacity: 1;
-}
-.eye-clock-tick {
-  stroke: rgba(255, 255, 255, 0.28);
-  stroke-width: 1;
-  stroke-linecap: round;
-}
-.eye-clock-tick-major {
-  stroke: rgba(255, 255, 255, 0.5);
-  stroke-width: 1.5;
-}
-/* The iris timer fill — a pie wedge that starts at the session's own
-   fraction of the hour dial and shrinks toward nothing as time runs out
-   (see buildWedgePathD()'s doc comment). Sits ON TOP of the tick marks in
-   paint order, so 0.8 (not 1) opacity is what keeps them visible through
-   it — "easy to see the timer, but the lines underneath still read." */
-.eye-clock-wedge {
-  fill: var(--band-color, #a78bfa);
-  opacity: 0;
-  /* Only opacity transitions — `d` is rewritten every rAF frame via
-     setAttribute (see MetronomeVisual.tsx), already smooth at 60fps; a
-     CSS transition on `d` too would lag behind those precise per-frame
-     writes instead of tracking them, the same class of bug fixed for the
-     pupil/settle-tail race in an earlier pass. */
-  transition: opacity var(--dur-slow) var(--ease-soft);
-  pointer-events: none;
-}
-.metronome-eye.has-session .eye-clock-wedge {
-  opacity: 0.8;
-}
-.eye-clock-text {
-  fill: var(--text);
-  font-size: 9px;
-  font-variant-numeric: tabular-nums;
-  font-weight: 600;
 }
 
 .neuron-node {
@@ -990,6 +972,16 @@ select:hover {
   align-items: center;
   text-align: center;
 }
+/* The numeric mm:ss readout — used to live inside the eye's clock face;
+   now lives here again since that iris-timer ring was removed. */
+.session-countdown {
+  margin: 0;
+  font-size: 1.6rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  letter-spacing: 0.02em;
+}
 .session-status {
   margin: 0;
   font-size: 0.8rem;
@@ -1198,15 +1190,16 @@ select:hover {
   .stage-readout,
   .coming-soon-ufo,
   .ufo-light,
-  .metronome-eye.eye-blink {
+  .metronome-eye.eye-blink,
+  .focus-dashboard,
+  .streak-flame-lit,
+  .unlock-banner,
+  .fractal-tree-sway,
+  .fractal-tree-fruit,
+  .medallion-picker {
     animation: none;
   }
   .eye-pupil.tracking {
-    transition: none;
-  }
-  .eye-clock-ticks,
-  .eye-clock-wedge,
-  .eye-clock-text {
     transition: none;
   }
   /* A plain opacity fade instead of the drop-shadow bloom — no
@@ -1225,4 +1218,346 @@ select:hover {
   30% {
     opacity: 0.7;
   }
+}
+
+/* ============================================================================
+   Focus dashboard, medallions & the fractal tree — the gamification layer:
+   daily "watering" streaks, per-band duration stats, a fractal tree that
+   grows with total practice time and bears medallion "fruit," and the
+   medallion picker popover opened by tapping the bagel weight. Reuses the
+   SAME cards/labels/hint styling and motion tokens as .control-panel
+   rather than inventing a second visual language for the new features.
+   ============================================================================ */
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.focus-dashboard {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  border-top: 1px solid var(--surface-border);
+  padding-top: 28px;
+  animation: panel-rise var(--dur-slow) var(--ease-soft) both;
+}
+
+.focus-dashboard-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.focus-dashboard-header h2 {
+  margin: 4px 0 0;
+  font-size: 1.3rem;
+  font-weight: 600;
+}
+
+.streak-pill {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-radius: 999px;
+  border: 1px solid var(--surface-border);
+  background: rgba(255, 255, 255, 0.03);
+}
+.streak-flame {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--text-faint);
+  transition: background var(--dur-slow) var(--ease-soft), box-shadow var(--dur-slow) var(--ease-soft);
+}
+.streak-flame-lit {
+  background: #fb923c;
+  box-shadow: 0 0 10px rgba(251, 146, 60, 0.75);
+  animation: streak-flame-pulse 2.4s var(--ease-soft) infinite;
+}
+@keyframes streak-flame-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 8px rgba(251, 146, 60, 0.6);
+  }
+  50% {
+    box-shadow: 0 0 14px rgba(251, 146, 60, 0.95);
+  }
+}
+.streak-count {
+  font-size: 1.15rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.streak-label {
+  font-size: 0.76rem;
+  color: var(--text-muted);
+}
+
+.unlock-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  border-radius: 14px;
+  border: 1px solid color-mix(in srgb, var(--band-color, #a78bfa) 45%, var(--surface-border));
+  background: color-mix(in srgb, var(--band-color, #a78bfa) 10%, transparent);
+  font-size: 0.86rem;
+  color: var(--text);
+  animation: unlock-banner-in var(--dur-slow) var(--ease-harmonic) both;
+}
+.unlock-banner-glyphs {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+@keyframes unlock-banner-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.focus-dashboard-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 16px;
+}
+@media (max-width: 640px) {
+  .focus-dashboard-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.focus-card {
+  background: var(--surface);
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius);
+  padding: 20px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.tree-card {
+  align-items: center;
+  text-align: center;
+}
+.fractal-tree {
+  width: min(100%, 220px);
+  aspect-ratio: 1;
+}
+.fractal-tree-ground-shadow {
+  fill: rgba(0, 0, 0, 0.28);
+}
+.fractal-tree-sway {
+  transform-box: view-box;
+  transform-origin: 50% 100%;
+  animation: fractal-tree-sway 9s var(--ease-soft) infinite;
+}
+@keyframes fractal-tree-sway {
+  0%,
+  100% {
+    transform: rotate(-0.8deg);
+  }
+  50% {
+    transform: rotate(0.8deg);
+  }
+}
+.fractal-tree-fruit {
+  animation: fractal-fruit-bob 3.4s var(--ease-soft) infinite;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+@keyframes fractal-fruit-bob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-2.5px);
+  }
+}
+.tree-card-caption {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.tree-stage-label {
+  font-weight: 600;
+  color: var(--text);
+}
+.tree-growth-pct {
+  font-size: 0.78rem;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.stats-card .band-duration-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+.band-duration-row {
+  display: grid;
+  grid-template-columns: 56px 1fr 52px;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.8rem;
+}
+.band-duration-label {
+  font-weight: 600;
+}
+.band-duration-track {
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+}
+.band-duration-fill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width var(--dur-slow) var(--ease-soft);
+}
+.band-duration-value {
+  text-align: right;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.streak-detail-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.medallion-collection {
+  gap: 14px;
+}
+.medallion-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 10px;
+}
+.medallion-grid-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 14px 10px;
+  border-radius: 14px;
+  border: 1px solid var(--surface-border);
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--text-muted);
+  cursor: pointer;
+  text-align: center;
+  transition: border-color var(--dur-base) var(--ease-soft), transform var(--dur-fast) var(--ease-harmonic),
+    background var(--dur-base) var(--ease-soft);
+}
+.medallion-grid-item:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--band-color, #a78bfa) 45%, var(--surface-border));
+  transform: translateY(-2px);
+}
+.medallion-grid-item:active:not(:disabled) {
+  transform: translateY(0) scale(0.97);
+}
+.medallion-grid-item.selected {
+  border-color: var(--band-color, #a78bfa);
+  background: color-mix(in srgb, var(--band-color, #a78bfa) 10%, transparent);
+}
+.medallion-grid-item.locked,
+.medallion-grid-item:disabled {
+  cursor: default;
+}
+.medallion-grid-name {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text);
+}
+.medallion-grid-item.locked .medallion-grid-name {
+  color: var(--text-faint);
+}
+.medallion-grid-blurb {
+  font-size: 0.68rem;
+  line-height: 1.35;
+  color: var(--text-faint);
+}
+
+/* ---------- Medallion picker popover (opened from the bagel weight) ---------- */
+
+.medallion-picker {
+  position: absolute;
+  left: 50%;
+  bottom: -8px;
+  transform: translate(-50%, 100%);
+  z-index: 5;
+  width: min(280px, 88vw);
+  background: var(--bg-2);
+  border: 1px solid var(--surface-border);
+  border-radius: 16px;
+  padding: 12px 14px 14px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  animation: unlock-banner-in var(--dur-base) var(--ease-harmonic) both;
+}
+.medallion-picker-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.76rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  margin-bottom: 10px;
+}
+.medallion-picker-close {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 6px;
+}
+.medallion-picker-close:hover {
+  color: var(--text);
+}
+.medallion-picker-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.medallion-picker-item {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--surface-border);
+  border-radius: 10px;
+  padding: 4px;
+  cursor: pointer;
+  transition: border-color var(--dur-base) var(--ease-soft), transform var(--dur-fast) var(--ease-harmonic);
+}
+.medallion-picker-item:hover {
+  transform: translateY(-1px);
+}
+.medallion-picker-item.selected {
+  border-color: var(--band-color, #a78bfa);
+}
+.medallion-picker-hint {
+  margin: 10px 0 0;
+  font-size: 0.72rem;
+  line-height: 1.4;
+  color: var(--text-faint);
 }
