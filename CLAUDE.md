@@ -3,6 +3,51 @@
 This file is read automatically by Claude Code at the start of every session
 in this repo. Keep it up to date as decisions get made.
 
+## Status update — footer poll: "should this app add accounts?"
+
+A one-question poll at the very bottom of the page (`AccountPoll.tsx`,
+`useAccountPoll.ts`), asking visitors whether the app should ever grow
+account creation / cross-device sync — genuinely asked, not rhetorical,
+after the builder asked Claude Code directly whether accounts were needed
+and got a "no, not yet" recommendation.
+
+⚠️ **Real architectural gap, flagged rather than papered over**: this app
+has NO backend of its own — everything else is `localStorage`, per
+browser. A poll where "everyone votes once and sees the current results"
+needs vote counts SHARED across every visitor, which localStorage cannot
+do alone. Presented the builder with three options (a free public counter
+API with no real anti-tamper protection; a small serverless backend she'd
+have to set up an account for; or skipping real shared results entirely)
+and she picked the free public counter API — `abacus.jasoncameron.dev`,
+verified live and reachable before committing to it (an earlier, more
+commonly-cited option, `countapi.xyz`, is dead — connection failures on
+every request; don't reach for it). **Accepted trade-off, not a bug**: a
+public no-auth counter has no real anti-tamper protection (someone
+determined could inflate a count directly, or vote again from another
+browser/after clearing storage) — fine for a lighthearted opinion poll,
+would NOT be fine for anything that needed to be trustworthy.
+
+**What's actually shared vs. local**: only the two running vote totals
+live on the third-party counter (`NAMESPACE = 'mindful-metronome-app'`,
+keys `account-poll-cloud-yes`/`-no`). "Have I already voted" is a plain
+local flag (`mindful-metronome:account-poll-vote:v1`) — nothing about a
+vote is tied to any identity, matching this app's honor-system, no-login
+philosophy everywhere else. One GET per key on load (doesn't count as a
+vote), one HIT per vote (increments AND returns the new value in the same
+response, so no extra round-trip). A failed load shows an honest "couldn't
+reach the tally" state rather than a broken poll; a failed vote leaves the
+buttons enabled and shows a small retry hint instead of silently losing
+the click.
+
+**Results are shown live, always** — both before and after voting, not
+revealed only as a post-vote reward. The ask ("everyone... sees the
+results of the current voting") was read as "always visible," the
+simpler and more transparent of two reasonable interpretations; flagged
+here in case that reading turns out to be wrong. Voting itself is
+one-shot per browser: the two vote buttons stay visible but become
+disabled once cast, with the chosen one highlighted — a listener can
+always see what they picked, not just that they can't pick again.
+
 ## Status update — mystery medallion #51: a genuinely simulated double pendulum, plus a few simple animated glyphs
 
 Two follow-ups to the mystery-fruit system, per the builder's ask: "animate

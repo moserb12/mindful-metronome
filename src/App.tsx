@@ -7,6 +7,7 @@ import { AcousticVisualizer } from './components/Metronome/AcousticVisualizer';
 import { ControlPanel } from './components/Metronome/ControlPanel';
 import { SessionTimer } from './components/Metronome/SessionTimer';
 import { BilateralComingSoonBanner } from './components/BilateralComingSoonBanner';
+import { AccountPoll } from './components/AccountPoll';
 import { FocusDashboard } from './components/Dashboard/FocusDashboard';
 import { BANDS } from './data/bands';
 
@@ -143,6 +144,8 @@ export default function App() {
         mysteryOwnedIds={focusStats.mysteryOwnedIds}
         onHarvestMysteryFruit={focusStats.harvestMysteryFruit}
       />
+
+      <AccountPoll />
 
       <footer className="app-footer">
         <p>Headphones recommended for the binaural layer. Mindful Metronome is free — use it as much as you like.</p>

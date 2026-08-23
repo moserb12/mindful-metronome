@@ -1223,6 +1223,97 @@ details[open] > .control-group-summary .control-group-chevron,
   animation: session-bloom 2.6s var(--ease-soft) 1;
 }
 
+/* ---------- Account poll (footer question) ---------- */
+
+.account-poll {
+  margin-top: 8px;
+  gap: 14px;
+  text-align: left;
+}
+.poll-question {
+  margin: 0;
+  font-size: 0.95rem;
+  color: var(--text);
+  line-height: 1.5;
+}
+.poll-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.poll-vote-btn {
+  flex: 1 1 200px;
+  padding: 12px 16px;
+  border-radius: 14px;
+  border: 1px solid var(--surface-border);
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--text);
+  font-size: 0.86rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color var(--dur-base) var(--ease-soft), transform var(--dur-fast) var(--ease-harmonic),
+    background var(--dur-base) var(--ease-soft), opacity var(--dur-base) var(--ease-soft);
+}
+.poll-vote-btn:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--band-color, #a78bfa) 45%, var(--surface-border));
+  transform: translateY(-2px);
+}
+.poll-vote-btn:active:not(:disabled) {
+  transform: translateY(0) scale(0.98);
+}
+.poll-vote-btn.selected {
+  border-color: var(--band-color, #a78bfa);
+  background: color-mix(in srgb, var(--band-color, #a78bfa) 12%, transparent);
+}
+.poll-vote-btn:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.poll-vote-btn.selected:disabled {
+  opacity: 1;
+}
+
+.poll-results {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.poll-result-row {
+  display: grid;
+  grid-template-columns: minmax(120px, auto) 1fr 80px;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.78rem;
+}
+@media (max-width: 520px) {
+  .poll-result-row {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+}
+.poll-result-label {
+  color: var(--text-muted);
+}
+.poll-result-track {
+  height: 6px;
+}
+.poll-result-fill-yes {
+  background: var(--band-color, #a78bfa);
+}
+.poll-result-fill-no {
+  background: var(--text-faint);
+}
+.poll-result-value {
+  text-align: right;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+@media (max-width: 520px) {
+  .poll-result-value {
+    text-align: left;
+  }
+}
+
 /* ---------- Footer ---------- */
 
 .app-footer {
