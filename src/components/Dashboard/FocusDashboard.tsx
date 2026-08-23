@@ -1,10 +1,14 @@
+import { useState } from 'react';
 import { BAND_ORDER, BANDS } from '../../data/bands';
-import { MEDALLIONS } from '../../data/medallions';
+import { ALL_MEDALLIONS_BY_ID, MEDALLIONS } from '../../data/medallions';
 import type { MedallionId } from '../../data/medallions';
+import { MYSTERY_MEDALLIONS, RARITY_LABEL, type MysteryMedallionId } from '../../data/mysteryMedallions';
 import type { SecondsByBand, StreakInfo, TreeStageInfo } from '../../engine/growth';
 import { bandMinutes } from '../../engine/growth';
 import { FractalTree } from './FractalTree';
 import { MedallionIcon } from './MedallionIcon';
+import { MysteryFruitGround } from './MysteryFruitGround';
+import { MysteryRollModal } from './MysteryRollModal';
 
 interface FocusDashboardProps {
   totalMinutes: number;
@@ -17,6 +21,14 @@ interface FocusDashboardProps {
   onSelectMedallion: (id: MedallionId) => void;
   justUnlocked: MedallionId[];
   bandColor: string;
+  /** Grown-but-not-harvested mystery fruit — see MysteryFruitGround. */
+  pendingMysteryCount: number;
+  /** Every mystery medallion ever harvested — drives the expandable
+   * collection section's owned/locked state. */
+  mysteryOwnedIds: MysteryMedallionId[];
+  /** Rolls one pending fruit and returns what was won (or null — see
+   * useFocusStats.harvestMysteryFruit's own doc comment). */
+  onHarvestMysteryFruit: () => MysteryMedallionId | null;
 }
 
 function formatMinutesLabel(totalMinutes: number): string {
@@ -38,13 +50,23 @@ export function FocusDashboard({
   onSelectMedallion,
   justUnlocked,
   bandColor,
+  pendingMysteryCount,
+  mysteryOwnedIds,
+  onHarvestMysteryFruit,
 }: FocusDashboardProps) {
   const unlockedSet = new Set(unlockedIds);
+  const mysteryOwnedSet = new Set(mysteryOwnedIds);
   const maxBandMinutes = Math.max(1, ...BAND_ORDER.map((b) => bandMinutes(totalSecondsByBand, b)));
   const celebrationText =
     justUnlocked.length > 0
-      ? `New medallion${justUnlocked.length > 1 ? 's' : ''} unlocked: ${justUnlocked.map((id) => MEDALLIONS.find((m) => m.id === id)?.name ?? id).join(', ')}`
+      ? `New medallion${justUnlocked.length > 1 ? 's' : ''} unlocked: ${justUnlocked.map((id) => ALL_MEDALLIONS_BY_ID[id]?.name ?? id).join(', ')}`
       : '';
+
+  const [rollResult, setRollResult] = useState<MysteryMedallionId | null>(null);
+  function handleHarvest() {
+    const result = onHarvestMysteryFruit();
+    if (result) setRollResult(result);
+  }
 
   return (
     <section className="focus-dashboard" style={{ '--band-color': bandColor } as React.CSSProperties} aria-label="Focus dashboard">
@@ -117,6 +139,8 @@ export function FocusDashboard({
         </div>
       </div>
 
+      <MysteryFruitGround pendingCount={pendingMysteryCount} onHarvest={handleHarvest} />
+
       <div className="focus-card medallion-collection">
         <span className="control-label">Medallion collection — click one to mount it on the pendant</span>
         <div className="medallion-grid">
@@ -140,6 +164,45 @@ export function FocusDashboard({
           })}
         </div>
       </div>
+
+      <details className="focus-card control-group mystery-collection">
+        <summary className="control-group-summary">
+          <span className="control-label">
+            RNG unlockable skins — {mysteryOwnedIds.length}/{MYSTERY_MEDALLIONS.length} collected
+          </span>
+          <span className="control-group-chevron" aria-hidden="true">
+            ▸
+          </span>
+        </summary>
+        <div className="control-group-body">
+          <p className="control-hint">
+            Won only by harvesting mystery fruit from the ground above — never by a specific goal. Rarer pulls are rarer for a
+            reason; every roll is guaranteed to be something new.
+          </p>
+          <div className="medallion-grid">
+            {MYSTERY_MEDALLIONS.map((def) => {
+              const unlocked = mysteryOwnedSet.has(def.id);
+              const selected = def.id === selectedMedallionId;
+              return (
+                <button
+                  key={def.id}
+                  type="button"
+                  className={`medallion-grid-item ${selected ? 'selected' : ''} ${unlocked ? '' : 'locked'}`}
+                  onClick={() => unlocked && onSelectMedallion(def.id)}
+                  disabled={!unlocked}
+                  title={unlocked ? def.name : `Locked — ${RARITY_LABEL[def.rarity]} tier, harvest a mystery fruit to find out`}
+                >
+                  <MedallionIcon id={def.id} size={44} locked={!unlocked} />
+                  <span className="medallion-grid-name">{unlocked ? def.name : '???'}</span>
+                  <span className={`mystery-rarity-chip mystery-grid-chip rarity-${def.rarity}`}>{RARITY_LABEL[def.rarity]}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </details>
+
+      {rollResult && <MysteryRollModal resultId={rollResult} onClose={() => setRollResult(null)} />}
     </section>
   );
 }

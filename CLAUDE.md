@@ -3,6 +3,113 @@
 This file is read automatically by Claude Code at the start of every session
 in this repo. Keep it up to date as decisions get made.
 
+## Status update — mystery fruit: a second, RNG-driven medallion track
+
+A genuinely new system, at the builder's explicit request: alongside the 15
+goal-driven medallions (still exactly as documented below — nothing about
+them changed), there are now 50 more medallions won only by chance. Two
+tracks, two different kinds of proud: showing up, and good luck.
+
+**How a fruit becomes available** (`engine/mysteryFruits.ts`, pure/tested):
+a fruit "grows" at specific cumulative-minutes thresholds
+(`mysteryFruitThresholds()`) — 8 minutes for the first one, each next gap
+1.35x longer than the last ("progressively less often," per the builder),
+capped at a 240-minute gap so working toward the full 50-piece set stays a
+long-term thing to look forward to rather than something that effectively
+stops. This reuses the SAME `totalMinutes` growth.ts already tracks, so it
+stays consistent with this app's "derive from real logged time" philosophy
+— nothing new to track just for timing. `mysteryFruitsGrown(totalMinutes)`
+and `pendingMysteryFruitCount(totalMinutes, harvestedCount)` are the two
+pure functions everything else is built on.
+
+**Where they show up — the ground, not the tree.** Per the builder's own
+refinement mid-build ("they should drop to the ground... a bunch of balls
+with ? symbols on them"): pending (grown-but-unharvested) fruit renders as
+a wrapping row of plain "?" balls (`MysteryFruitGround.tsx`) in their own
+card beneath the tree/stats grid — deliberately NOT mixed into the tree's
+existing `pickFruitTips()` branch-tip fruit, which stays reserved for
+medallions actually OWNED (both families, once harvested — see below).
+This keeps "earned by showing up" and "won by luck" visually distinct
+until the moment of the payoff, then unifies them.
+
+**The one real exception to "derive, don't store"**: WHICH medallion a
+roll lands on is genuinely random, so unlike everything else in this app,
+that outcome has to be the persisted source of truth —
+`PersistedStats.mysteryUnlockedIds` (`storage/statsStorage.ts`), an
+append-only array in harvest order, sanitized the same
+tolerant-per-entry way as `dailySeconds`.
+
+**The roll** (`rollMysteryMedallion()` in mysteryFruits.ts): weighted by
+rarity (`RARITY_WEIGHT` in `data/mysteryMedallions.ts` — per-ITEM weight,
+not per-tier total, so a tier with more items in it doesn't silently
+dominate the odds), restricted to medallions NOT already owned. This is a
+deliberate design choice: this app has no currency to spend and no reason
+to ever waste a harvest on a repeat, so every successful roll is
+guaranteed to add something new — a free, no-bookkeeping-needed soft pity
+(once every common is owned, only uncommon-or-better remain to roll).
+⚠️ Don't "fix" this into allowing duplicates without re-reading this note
+— it's intentional, not an oversight.
+
+**Where the roll actually happens is a real gotcha, worth flagging for
+next time**: `useFocusStats.harvestMysteryFruit()` deliberately calls
+`rollMysteryMedallion()` (which uses `Math.random()`) OUTSIDE the
+`setStats` updater, not inside it. A `setState` updater must be pure —
+React (this app runs in `<StrictMode>`) can and does invoke it twice to
+catch exactly this kind of impurity — so randomness inside the updater
+risks rolling twice per real click. The roll happens once, synchronously,
+in the event-handler body (reading `statsRef.current`, the same ref the
+debounced-save effect already uses to dodge a stale closure); the updater
+itself just appends the already-decided result.
+
+**50 glyphs from 10 parametric shape "families," not 50 hand-authored
+paths** (`MedallionIcon.tsx`): bloom/sigil/gem/coil/wisp/ring/shard/comet/
+lattice (5 each) + eye (2, reserved for the two legendary items — doubles
+as a nod to this app's own eye motif for the rarest pulls). Each is a
+small generator driven by up to three numeric knobs
+(`MysteryGlyphSpec.n`/`n2`/`rotation`) — the same "shared generator,
+varied parameters" approach `starPath`/`spiralPathD`/`SnowflakeArm`
+already used for the goal-driven glyphs, just pushed further so 50
+genuinely distinct-looking icons stay real, maintainable code. Flavor text
+is shared per-rarity (`RARITY_BLURB`), not 50 individually written
+lines — with 50 items the real distinctiveness is each one's own
+name/color/shape; deliberate scope call, flagged here rather than silently
+minimized.
+
+**Type unification**: `MedallionId` (data/medallions.ts) now spans all
+three families (band orbs, milestones, mystery) so a harvested mystery
+medallion is equip-able on the pendant exactly like a goal-driven one —
+same picker, same pendant, same `MedallionGlyph` renderer. `MEDALLIONS`/
+`MEDALLIONS_BY_ID` stay goal-driven-only (they back the achievements grid
+and `computeUnlockedMedallions`); the new `ALL_MEDALLIONS_BY_ID` is the
+merged color/name lookup anything family-agnostic (the pendant,
+`MedallionIcon`) needs instead.
+
+**New goal-driven medallion tying the two systems together, per the
+builder's ask**: "Question Mark" (`data/medallions.ts`), unlocked by a new
+`{ type: 'mystery-harvest'; count: 10 }` `UnlockRule` — harvest 10 mystery
+fruits (regardless of what they turn out to be) and it unlocks in the
+regular achievements grid. `growth.ts`'s `FocusStats` gained an OPTIONAL
+`mysteryHarvestCount` field specifically so every pre-existing test literal
+in `growth.test.ts` stayed valid without an edit — same "missing entry
+falls back to a safe default" tolerance the rest of that file already
+uses.
+
+**Where they're displayed**: the achievements grid is unchanged, still 15
+goal-driven medallions only. The 50 mystery ones live in a NEW expandable
+`<details>` section directly below it — "RNG unlockable skins — N/50
+collected" — per the builder's own ask, reusing `ControlPanel.tsx`'s
+existing `.control-group`/`.control-group-summary` accordion styling
+rather than inventing a second collapsible pattern.
+
+**The reveal** (`MysteryRollModal.tsx`): a horizontal reel of glyphs spins
+past a shuffled run of filler medallions and settles on the real result
+(already decided — see the gotcha above), landing via a CSS `transform:
+translateX` transition, then hands off to a static reward card (glyph,
+rarity chip, name, flavor line). Tapping anywhere during the spin skips
+straight to the reveal — the outcome is already locked in either way, so
+forcing the full ~1.7s animation on every single pull would just be
+friction on a "keep them coming back" mechanic, not suspense.
+
 ## Status update — pendant badge-circle anchor, ∞ duration symbol (supersedes "no badge circle" below)
 
 Follow-up to the pendant redesign in the next status entry down, after two

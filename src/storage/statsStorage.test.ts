@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { DEFAULT_MEDALLION_ID } from '../data/medallions';
+import { MYSTERY_MEDALLIONS } from '../data/mysteryMedallions';
 import { emptySecondsByBand } from '../engine/growth';
 import { loadStats, saveStats, type PersistedStats } from './statsStorage';
 
@@ -15,16 +16,42 @@ describe('statsStorage', () => {
     expect(stats.totalSecondsByBand).toEqual(emptySecondsByBand());
     expect(stats.dailySeconds).toEqual({});
     expect(stats.selectedMedallionId).toBe(DEFAULT_MEDALLION_ID);
+    expect(stats.mysteryUnlockedIds).toEqual([]);
   });
 
-  it('round-trips a valid save through load', () => {
+  it('round-trips a valid save through load, including harvested mystery medallions', () => {
     const stats: PersistedStats = {
       totalSecondsByBand: { ...emptySecondsByBand(), alpha: 120, gamma: 45 },
       dailySeconds: { '2026-08-22': 90 },
       selectedMedallionId: 'star',
+      mysteryUnlockedIds: [MYSTERY_MEDALLIONS[0].id, MYSTERY_MEDALLIONS[1].id],
     };
     saveStats(stats);
     expect(loadStats()).toEqual(stats);
+  });
+
+  it('a selected mystery medallion validates just like a goal-driven one', () => {
+    const stats: PersistedStats = {
+      totalSecondsByBand: emptySecondsByBand(),
+      dailySeconds: {},
+      selectedMedallionId: MYSTERY_MEDALLIONS[0].id,
+      mysteryUnlockedIds: [MYSTERY_MEDALLIONS[0].id],
+    };
+    saveStats(stats);
+    expect(loadStats().selectedMedallionId).toBe(MYSTERY_MEDALLIONS[0].id);
+  });
+
+  it('drops unknown or duplicate mystery ids without discarding the valid ones', () => {
+    window.localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        totalSecondsByBand: emptySecondsByBand(),
+        dailySeconds: {},
+        selectedMedallionId: 'spark',
+        mysteryUnlockedIds: [MYSTERY_MEDALLIONS[0].id, 'not-a-real-mystery-medallion', MYSTERY_MEDALLIONS[0].id, MYSTERY_MEDALLIONS[1].id],
+      })
+    );
+    expect(loadStats().mysteryUnlockedIds).toEqual([MYSTERY_MEDALLIONS[0].id, MYSTERY_MEDALLIONS[1].id]);
   });
 
   it('drops an invalid band entry without discarding the other bands', () => {

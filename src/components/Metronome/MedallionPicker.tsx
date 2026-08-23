@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { MEDALLIONS_BY_ID, type MedallionId } from '../../data/medallions';
+import { ALL_MEDALLIONS_BY_ID, type MedallionId } from '../../data/medallions';
 import { MedallionIcon } from '../Dashboard/MedallionIcon';
 
 interface MedallionPickerProps {
@@ -56,7 +56,7 @@ export function MedallionPicker({ unlockedIds, selectedId, onSelect, onClose }: 
             type="button"
             className={`medallion-picker-item ${id === selectedId ? 'selected' : ''}`}
             onClick={() => onSelect(id)}
-            title={MEDALLIONS_BY_ID[id].name}
+            title={ALL_MEDALLIONS_BY_ID[id].name}
           >
             <MedallionIcon id={id} size={34} />
           </button>

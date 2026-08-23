@@ -15,7 +15,8 @@
 // ============================================================================
 
 import { BAND_ORDER, type BrainwaveBand } from '../data/bands';
-import { MEDALLIONS_BY_ID, DEFAULT_MEDALLION_ID, type MedallionId } from '../data/medallions';
+import { ALL_MEDALLIONS_BY_ID, DEFAULT_MEDALLION_ID, type MedallionId } from '../data/medallions';
+import { MYSTERY_MEDALLIONS_BY_ID, type MysteryMedallionId } from '../data/mysteryMedallions';
 import { emptySecondsByBand, type DailySecondsLog, type SecondsByBand } from '../engine/growth';
 
 const STORAGE_KEY = 'mindful-metronome:focus-stats:v1';
@@ -24,6 +25,13 @@ export interface PersistedStats {
   totalSecondsByBand: SecondsByBand;
   dailySeconds: DailySecondsLog;
   selectedMedallionId: MedallionId;
+  /** Every mystery medallion ever harvested, in harvest order — see
+   * engine/mysteryFruits.ts. This is the one field in this file that isn't
+   * re-derivable from the other two: WHICH medallion a roll lands on is
+   * genuinely random, so unlike totalSecondsByBand/dailySeconds (which
+   * everything else derives from), the outcome has to be the source of
+   * truth itself. */
+  mysteryUnlockedIds: MysteryMedallionId[];
 }
 
 const DATE_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -61,7 +69,30 @@ function sanitizeSecondsByBand(raw: unknown): SecondsByBand {
 }
 
 function sanitizeSelectedMedallionId(raw: unknown): MedallionId {
-  return typeof raw === 'string' && raw in MEDALLIONS_BY_ID ? (raw as MedallionId) : DEFAULT_MEDALLION_ID;
+  return typeof raw === 'string' && raw in ALL_MEDALLIONS_BY_ID ? (raw as MedallionId) : DEFAULT_MEDALLION_ID;
+}
+
+/** Keeps only real, non-duplicate mystery ids, in their original (harvest)
+ * order — same per-entry tolerance as the other sanitizers, so one corrupt
+ * entry can't cost the rest of a listener's mystery collection. Dedupe
+ * matters because rollMysteryMedallion() only ever offers ids NOT already
+ * owned, so a genuine duplicate here could only come from corrupted or
+ * hand-edited storage, not normal play. */
+function sanitizeMysteryUnlockedIds(raw: unknown): MysteryMedallionId[] {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<MysteryMedallionId>();
+  const result: MysteryMedallionId[] = [];
+  for (const entry of raw) {
+    if (typeof entry === 'string' && entry in MYSTERY_MEDALLIONS_BY_ID && !seen.has(entry as MysteryMedallionId)) {
+      seen.add(entry as MysteryMedallionId);
+      result.push(entry as MysteryMedallionId);
+    }
+  }
+  return result;
+}
+
+function emptyStats(): PersistedStats {
+  return { totalSecondsByBand: emptySecondsByBand(), dailySeconds: {}, selectedMedallionId: DEFAULT_MEDALLION_ID, mysteryUnlockedIds: [] };
 }
 
 /** Reads whatever validates from localStorage. Never throws — see
@@ -73,16 +104,17 @@ function sanitizeSelectedMedallionId(raw: unknown): MedallionId {
 export function loadStats(): PersistedStats {
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { totalSecondsByBand: emptySecondsByBand(), dailySeconds: {}, selectedMedallionId: DEFAULT_MEDALLION_ID };
+    if (!raw) return emptyStats();
     const parsed: unknown = JSON.parse(raw);
     const source = parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : {};
     return {
       totalSecondsByBand: sanitizeSecondsByBand(source.totalSecondsByBand),
       dailySeconds: sanitizeDailySeconds(source.dailySeconds),
       selectedMedallionId: sanitizeSelectedMedallionId(source.selectedMedallionId),
+      mysteryUnlockedIds: sanitizeMysteryUnlockedIds(source.mysteryUnlockedIds),
     };
   } catch {
-    return { totalSecondsByBand: emptySecondsByBand(), dailySeconds: {}, selectedMedallionId: DEFAULT_MEDALLION_ID };
+    return emptyStats();
   }
 }
 

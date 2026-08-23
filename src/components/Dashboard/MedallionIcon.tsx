@@ -1,4 +1,5 @@
-import { MEDALLIONS_BY_ID, type MedallionId } from '../../data/medallions';
+import { ALL_MEDALLIONS_BY_ID, type MedallionId } from '../../data/medallions';
+import { MYSTERY_MEDALLIONS_BY_ID, type MysteryGlyphSpec, type MysteryMedallionId } from '../../data/mysteryMedallions';
 
 // ============================================================================
 // MedallionIcon — one shared glyph renderer for every collectible, used
@@ -69,6 +70,220 @@ function infinityPathD(cx: number, cy: number, scale: number, steps = 80): strin
   return `${pts.join(' ')} Z`;
 }
 
+/** Regular n-gon vertices, in the shared 0..100 local space — shared root
+ * for both sigilPath (outline) and the gem/lattice families below (which
+ * need the raw points, not just a path string, to draw facet/interlock
+ * lines from each vertex). */
+function polygonPoints(cx: number, cy: number, r: number, sides: number, startDeg = -90): { x: number; y: number }[] {
+  const pts: { x: number; y: number }[] = [];
+  for (let i = 0; i < sides; i++) {
+    const rad = ((startDeg + (360 / sides) * i) * Math.PI) / 180;
+    pts.push({ x: cx + r * Math.cos(rad), y: cy + r * Math.sin(rad) });
+  }
+  return pts;
+}
+
+function polygonPathD(pts: { x: number; y: number }[]): string {
+  return `M ${pts.map((p) => `${p.x.toFixed(2)} ${p.y.toFixed(2)}`).join(' L ')} Z`;
+}
+
+/** A cluster of thin triangular shards radiating from a small inner ring —
+ * used by the "shard" mystery family. Alternates long/short shard length
+ * so the cluster reads as shattered/uneven rather than a uniform star. */
+function shardClusterPathD(cx: number, cy: number, n: number, outerR: number, innerR: number, startDeg = -90): string {
+  const halfAngleDeg = 180 / n / 2.2;
+  const subpaths: string[] = [];
+  for (let i = 0; i < n; i++) {
+    const lengthMul = i % 2 === 0 ? 1 : 0.7;
+    const tipR = innerR + (outerR - innerR) * lengthMul;
+    const centerDeg = startDeg + (360 / n) * i;
+    const aRad = ((centerDeg - halfAngleDeg) * Math.PI) / 180;
+    const bRad = ((centerDeg + halfAngleDeg) * Math.PI) / 180;
+    const tipRad = (centerDeg * Math.PI) / 180;
+    const ax = cx + innerR * Math.cos(aRad);
+    const ay = cy + innerR * Math.sin(aRad);
+    const bx = cx + innerR * Math.cos(bRad);
+    const by = cy + innerR * Math.sin(bRad);
+    const tx = cx + tipR * Math.cos(tipRad);
+    const ty = cy + tipR * Math.sin(tipRad);
+    subpaths.push(`M ${ax.toFixed(2)} ${ay.toFixed(2)} L ${tx.toFixed(2)} ${ty.toFixed(2)} L ${bx.toFixed(2)} ${by.toFixed(2)} Z`);
+  }
+  return subpaths.join(' ');
+}
+
+const PETAL_PATH_D = 'M50 50 C58 42 58 24 50 14 C42 24 42 42 50 50 Z';
+const WISP_PATH_D = 'M20 70 C35 30 65 70 80 30';
+
+/**
+ * Renders one mystery medallion's glyph from its `MysteryGlyphSpec` —
+ * 10 shape "families," each a small parametric generator (n/n2/rotation
+ * knobs) rather than 50 individually hand-authored paths, the same
+ * "shared generator, varied parameters" approach starPath/spiralPathD/
+ * SnowflakeArm already use elsewhere in this file. See
+ * data/mysteryMedallions.ts's file comment for why.
+ */
+function MysteryGlyph({ spec, color }: { spec: MysteryGlyphSpec; color: string }) {
+  const { family, n, n2, rotation = 0 } = spec;
+  switch (family) {
+    case 'bloom': {
+      const petals = n ?? 6;
+      return (
+        <>
+          {Array.from({ length: petals }).map((_, i) => (
+            <path key={i} d={PETAL_PATH_D} fill={color} opacity={0.85} transform={`rotate(${rotation + (360 / petals) * i} 50 50)`} />
+          ))}
+          <circle cx={50} cy={50} r={6} fill={color} />
+        </>
+      );
+    }
+    case 'sigil': {
+      const sides = n ?? 5;
+      const pts = polygonPoints(50, 50, 28, sides, -90 + rotation);
+      return (
+        <>
+          <path d={polygonPathD(pts)} fill="none" stroke={color} strokeWidth={3.5} strokeLinejoin="round" />
+          {sides <= 4 ? (
+            <line x1={50} y1={26} x2={50} y2={74} stroke={color} strokeWidth={2.5} strokeLinecap="round" />
+          ) : (
+            <circle cx={50} cy={50} r={4} fill={color} />
+          )}
+        </>
+      );
+    }
+    case 'gem': {
+      const sides = n ?? 5;
+      const pts = polygonPoints(50, 50, 28, sides, -90 + rotation);
+      return (
+        <>
+          <path d={polygonPathD(pts)} fill={color} opacity={0.88} />
+          {n2 ? pts.map((p, i) => <line key={i} x1={50} y1={50} x2={p.x} y2={p.y} stroke="rgba(5,5,10,0.35)" strokeWidth={1.5} />) : null}
+        </>
+      );
+    }
+    case 'coil': {
+      const turns = (n ?? 15) / 10;
+      return (
+        <>
+          <path
+            d={spiralPathD(50, 50, turns, 32)}
+            fill="none"
+            stroke={color}
+            strokeWidth={3}
+            strokeLinecap="round"
+            transform={rotation ? `rotate(${rotation} 50 50)` : undefined}
+          />
+          {n2 === 2 && (
+            <path
+              d={spiralPathD(50, 50, turns, 32)}
+              fill="none"
+              stroke={color}
+              strokeWidth={2}
+              strokeLinecap="round"
+              opacity={0.5}
+              transform={`rotate(${180 + rotation} 50 50)`}
+            />
+          )}
+        </>
+      );
+    }
+    case 'wisp': {
+      const strands = n ?? 1;
+      return (
+        <g transform={rotation ? `rotate(${rotation} 50 50)` : undefined}>
+          {Array.from({ length: strands }).map((_, i) => (
+            <path
+              key={i}
+              d={WISP_PATH_D}
+              fill="none"
+              stroke={color}
+              strokeWidth={4 - i}
+              strokeLinecap="round"
+              opacity={1 - i * 0.28}
+              transform={i ? `translate(0 ${i * 7})` : undefined}
+            />
+          ))}
+        </g>
+      );
+    }
+    case 'ring': {
+      const rings = n ?? 2;
+      return (
+        <>
+          {Array.from({ length: rings }).map((_, i) => {
+            const r = rings <= 1 ? 24 : 14 + i * ((34 - 14) / (rings - 1));
+            const circumference = 2 * Math.PI * r;
+            return (
+              <circle
+                key={i}
+                cx={50}
+                cy={50}
+                r={r}
+                fill="none"
+                stroke={color}
+                strokeWidth={3}
+                strokeDasharray={`${circumference * 0.62} ${circumference * 0.38}`}
+                transform={`rotate(${rotation + i * 47} 50 50)`}
+              />
+            );
+          })}
+        </>
+      );
+    }
+    case 'shard':
+      return <path d={shardClusterPathD(50, 50, n ?? 6, 34, 10, -90 + rotation)} fill={color} />;
+    case 'comet': {
+      const rad = (rotation * Math.PI) / 180;
+      const dx = Math.cos(rad);
+      const dy = Math.sin(rad);
+      const headR = 12;
+      const dotCount = n ?? 4;
+      return (
+        <>
+          {Array.from({ length: dotCount }).map((_, i) => {
+            const t = i + 1;
+            const dist = 14 + t * 11;
+            const r = Math.max(2, headR * 0.55 - t * 1.6);
+            return <circle key={i} cx={50 - dx * dist} cy={50 - dy * dist} r={r} fill={color} opacity={0.55 - i * 0.08} />;
+          })}
+          <circle cx={50 + dx * 14} cy={50 + dy * 14} r={headR} fill={color} />
+        </>
+      );
+    }
+    case 'lattice': {
+      const sides = n ?? 3;
+      return (
+        <>
+          <path d={polygonPathD(polygonPoints(50, 50, 30, sides, -90 + rotation))} fill="none" stroke={color} strokeWidth={2.5} />
+          <path
+            d={polygonPathD(polygonPoints(50, 50, 30, sides, -90 + rotation + 180 / sides))}
+            fill="none"
+            stroke={color}
+            strokeWidth={2.5}
+          />
+        </>
+      );
+    }
+    case 'eye':
+    default: {
+      const lashCount = n ?? 6;
+      return (
+        <>
+          <path d="M14 50 Q50 22 86 50 Q50 78 14 50 Z" fill="none" stroke={color} strokeWidth={3.5} />
+          <circle cx={50} cy={50} r={13} fill={color} />
+          <circle cx={50} cy={50} r={5} fill="rgba(5,5,10,0.55)" />
+          {Array.from({ length: lashCount }).map((_, i) => {
+            const t = lashCount <= 1 ? 0 : (i / (lashCount - 1)) * 2 - 1;
+            const x = 50 + t * 32;
+            const y = 50 - Math.sqrt(Math.max(0, 1 - t * t)) * 26 - 2;
+            return <line key={i} x1={x} y1={y} x2={x} y2={y - 8} stroke={color} strokeWidth={2} strokeLinecap="round" opacity={0.7} />;
+          })}
+          {n2 ? <circle cx={50} cy={50} r={22} fill="none" stroke={color} strokeWidth={1.2} opacity={0.4} /> : null}
+        </>
+      );
+    }
+  }
+}
+
 const LOCKED_COLOR = '#5b6472';
 
 /** Radius of the circular badge drawn behind every medallion's glyph, in
@@ -130,6 +345,11 @@ function SnowflakeArm({ deg, color }: { deg: number; color: string }) {
  * glyphs and don't need redesigning.
  */
 export function MedallionGlyph({ id, color }: { id: MedallionId; color: string }) {
+  if (id.startsWith('mystery-')) {
+    const def = MYSTERY_MEDALLIONS_BY_ID[id as MysteryMedallionId];
+    return <MysteryGlyph spec={def.glyph} color={color} />;
+  }
+
   if (id.endsWith('-orb')) {
     switch (id) {
       case 'delta-orb': // Hourglass — stillness, deep rest
@@ -234,13 +454,23 @@ export function MedallionGlyph({ id, color }: { id: MedallionId; color: string }
           fill={color}
         />
       );
+    case 'question-mark':
+      // Hand-drawn hook + dot, matching this file's "no icon fonts" rule —
+      // the reward for harvesting 10 mystery fruits IS a literal question
+      // mark, per the builder's own ask.
+      return (
+        <>
+          <path d="M32 34 Q32 16 50 16 Q68 16 68 34 Q68 48 54 54 Q50 56 50 64" stroke={color} strokeWidth={8} strokeLinecap="round" fill="none" />
+          <circle cx={50} cy={80} r={6} fill={color} />
+        </>
+      );
     default:
       return <circle cx={50} cy={50} r={26} fill={color} />;
   }
 }
 
 export function MedallionIcon({ id, size = 40, locked = false, className, title }: MedallionIconProps) {
-  const def = MEDALLIONS_BY_ID[id];
+  const def = ALL_MEDALLIONS_BY_ID[id];
   const color = locked ? LOCKED_COLOR : def.color;
 
   return (

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { BANDS, MAX_BPM, MIN_BPM, type BrainwaveBand } from '../../data/bands';
 import type { TickSubdivision } from '../../audio/binauralEngine';
-import { MEDALLIONS_BY_ID, type MedallionId } from '../../data/medallions';
+import { ALL_MEDALLIONS_BY_ID, type MedallionId } from '../../data/medallions';
 import { MOOD_BY_BAND } from '../../data/moods';
 import { buildSmoothPath, clamp, pendulumEase, waveOffset } from '../../engine/motion';
 import { computeSwingSegment, type SessionPlaybackPhase, type SessionState, type SwingState } from '../../hooks/useMetronomeEngine';
@@ -474,7 +474,7 @@ interface PendantProps {
  */
 function Pendant({ medallionId, onTap, pendantRef }: PendantProps) {
   const tipY = PIVOT.y + ARM_LENGTH;
-  const color = MEDALLIONS_BY_ID[medallionId].color;
+  const color = ALL_MEDALLIONS_BY_ID[medallionId].color;
   return (
     <g
       ref={pendantRef}

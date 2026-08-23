@@ -139,6 +139,9 @@ export default function App() {
         onSelectMedallion={focusStats.setSelectedMedallionId}
         justUnlocked={focusStats.justUnlocked}
         bandColor={bandInfo.color}
+        pendingMysteryCount={focusStats.pendingMysteryCount}
+        mysteryOwnedIds={focusStats.mysteryOwnedIds}
+        onHarvestMysteryFruit={focusStats.harvestMysteryFruit}
       />
 
       <footer className="app-footer">

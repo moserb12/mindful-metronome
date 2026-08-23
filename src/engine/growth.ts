@@ -38,6 +38,13 @@ export type DailySecondsLog = Record<string, number>;
 export interface FocusStats {
   totalSecondsByBand: SecondsByBand;
   dailySeconds: DailySecondsLog;
+  /** How many mystery fruits have been harvested (see engine/mysteryFruits.ts)
+   * — feeds the 'mystery-harvest' unlock rule below. Optional, defaulting to
+   * 0, purely so every existing FocusStats literal in growth.test.ts (and
+   * any other caller that predates the mystery-fruit feature) stays valid
+   * without an edit — the same "missing entry falls back to a safe default"
+   * tolerance sanitizeSecondsByBand already applies per-band. */
+  mysteryHarvestCount?: number;
 }
 
 export function emptySecondsByBand(): SecondsByBand {
@@ -140,6 +147,8 @@ export function isMedallionUnlocked(def: MedallionDef, stats: FocusStats, streak
       return totalMinutesAllBands(stats.totalSecondsByBand) >= def.unlock.minutes;
     case 'streak-days':
       return streak.longest >= def.unlock.days;
+    case 'mystery-harvest':
+      return (stats.mysteryHarvestCount ?? 0) >= def.unlock.count;
   }
 }
 

@@ -1693,3 +1693,244 @@ details[open] > .control-group-summary .control-group-chevron,
   line-height: 1.4;
   color: var(--text-faint);
 }
+
+/* ---------- Mystery fruit: ground balls, rarity chips, roll modal ---------- */
+/* Rarity hex values here must stay in sync with RARITY_COLOR in
+   data/mysteryMedallions.ts — same "JS constant, CSS fallback literal"
+   duplication var(--band-color, #a78bfa) already uses throughout this
+   file, since these five colors are fixed app-wide constants, not a
+   per-instance value worth threading through inline styles everywhere
+   they're needed (a chip in a grid of 50, every reel cell, the modal
+   border...). */
+.rarity-common {
+  --rarity-color: #94a3b8;
+}
+.rarity-uncommon {
+  --rarity-color: #2dd4bf;
+}
+.rarity-rare {
+  --rarity-color: #38bdf8;
+}
+.rarity-epic {
+  --rarity-color: #c084fc;
+}
+.rarity-legendary {
+  --rarity-color: #f5b942;
+}
+
+.mystery-fruit-ground-card {
+  gap: 10px;
+}
+.mystery-fruit-ground {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.mystery-fruit-ball {
+  width: 46px;
+  height: 46px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  border: 1px solid var(--surface-border);
+  background: radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.02));
+  color: var(--text-muted);
+  font-weight: 700;
+  font-size: 1.1rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: mystery-fruit-drop 0.5s var(--ease-harmonic) both, mystery-fruit-bob 3.2s var(--ease-soft) 0.5s infinite;
+  transition: border-color var(--dur-base) var(--ease-soft), transform var(--dur-fast) var(--ease-harmonic), color var(--dur-base) var(--ease-soft);
+}
+.mystery-fruit-ball:hover {
+  border-color: color-mix(in srgb, var(--band-color, #a78bfa) 55%, var(--surface-border));
+  color: var(--text);
+  transform: translateY(-2px) scale(1.05);
+}
+.mystery-fruit-ball:active {
+  transform: translateY(0) scale(0.94);
+}
+@keyframes mystery-fruit-drop {
+  from {
+    opacity: 0;
+    transform: translateY(-28px);
+  }
+  60% {
+    opacity: 1;
+    transform: translateY(4px);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+@keyframes mystery-fruit-bob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-2px);
+  }
+}
+
+.mystery-rarity-chip {
+  display: inline-block;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--rarity-color);
+  border: 1px solid color-mix(in srgb, var(--rarity-color) 55%, transparent);
+  background: color-mix(in srgb, var(--rarity-color) 14%, transparent);
+}
+.mystery-grid-chip {
+  margin-top: 2px;
+}
+.mystery-collection .control-group-body {
+  gap: 14px;
+}
+
+/* Reveal modal */
+.mystery-roll-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(2, 2, 8, 0.72);
+  padding: 20px;
+  animation: unlock-banner-in var(--dur-base) var(--ease-soft) both;
+}
+.mystery-roll-modal {
+  position: relative;
+  width: min(340px, 100%);
+  background: var(--bg-2);
+  border: 1px solid color-mix(in srgb, var(--rarity-color, #a78bfa) 40%, var(--surface-border));
+  border-radius: var(--radius);
+  padding: 26px 22px 22px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.55);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  transition: border-color var(--dur-slow) var(--ease-soft);
+}
+.mystery-roll-modal.revealed {
+  border-color: color-mix(in srgb, var(--rarity-color, #a78bfa) 70%, var(--surface-border));
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.55), 0 0 46px color-mix(in srgb, var(--rarity-color, #a78bfa) 35%, transparent);
+}
+.mystery-roll-close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+}
+
+.mystery-reel-viewport {
+  position: relative;
+  width: 100%;
+  height: 84px;
+  overflow: hidden;
+  border-radius: 14px;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid var(--surface-border);
+  padding: 0;
+  cursor: pointer;
+}
+.mystery-reel-track {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  height: 100%;
+  display: flex;
+}
+.mystery-reel-cell {
+  flex: 0 0 84px;
+  width: 84px;
+  height: 84px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.mystery-reel-marker {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 84px;
+  height: 100%;
+  border-left: 1px solid color-mix(in srgb, var(--band-color, #a78bfa) 55%, transparent);
+  border-right: 1px solid color-mix(in srgb, var(--band-color, #a78bfa) 55%, transparent);
+  pointer-events: none;
+}
+
+.mystery-reveal {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  text-align: center;
+  animation: mystery-reveal-in var(--dur-slow) var(--ease-harmonic) both;
+}
+@keyframes mystery-reveal-in {
+  from {
+    opacity: 0;
+    transform: scale(0.85);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+.mystery-reveal-glow {
+  position: absolute;
+  top: -10px;
+  width: 140px;
+  height: 140px;
+  border-radius: 50%;
+  background: radial-gradient(circle, color-mix(in srgb, var(--rarity-color, #a78bfa) 45%, transparent) 0%, transparent 70%);
+  filter: blur(6px);
+  pointer-events: none;
+}
+.rarity-legendary .mystery-reveal-glow {
+  animation: mystery-legendary-pulse 1.8s var(--ease-soft) infinite;
+}
+@keyframes mystery-legendary-pulse {
+  0%,
+  100% {
+    opacity: 0.7;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.15);
+  }
+}
+.mystery-reveal-icon {
+  position: relative;
+  filter: drop-shadow(0 0 18px color-mix(in srgb, var(--rarity-color, #a78bfa) 55%, transparent));
+}
+.mystery-reveal-name {
+  margin: 4px 0 0;
+  font-size: 1.15rem;
+  color: var(--text);
+}
+.mystery-reveal-close {
+  margin-top: 8px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mystery-fruit-ball {
+    animation: none;
+  }
+  .mystery-roll-backdrop,
+  .mystery-reveal {
+    animation: none;
+  }
+  .mystery-reveal-glow {
+    animation: none;
+  }
+}

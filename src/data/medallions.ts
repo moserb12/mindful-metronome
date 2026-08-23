@@ -1,5 +1,6 @@
 import type { BrainwaveBand } from './bands';
 import { BANDS } from './bands';
+import { MYSTERY_MEDALLIONS_BY_ID, type MysteryMedallionId } from './mysteryMedallions';
 
 // ============================================================================
 // Medallions — the little collectible glyphs a listener can mount on the
@@ -24,6 +25,18 @@ import { BANDS } from './bands';
 // computeSwingSegment/computeSessionPhase elsewhere in this app: prefer a
 // pure function over incrementally-updated state wherever the inputs are
 // already available.
+//
+// A THIRD family lives in data/mysteryMedallions.ts: 50 "mystery" medallions
+// won by a weighted RNG roll (see engine/mysteryFruits.ts), not by any rule
+// expressible here. Those genuinely CAN'T be a pure function of FocusStats
+// (the outcome is random) — they're the one exception to the paragraph
+// above, and their result really is stored (PersistedStats.mysteryUnlockedIds
+// in storage/statsStorage.ts). MedallionId below spans all three families so
+// a mystery medallion can be equipped on the pendant exactly like a
+// goal-driven one; MEDALLIONS/MEDALLIONS_BY_ID stay goal-driven-only (they
+// back the achievements grid and computeUnlockedMedallions), while
+// ALL_MEDALLIONS_BY_ID at the bottom of this file is the merged lookup
+// anything family-agnostic (the pendant, MedallionIcon) needs for color/name.
 // ============================================================================
 
 export type MilestoneMedallionId =
@@ -36,14 +49,15 @@ export type MilestoneMedallionId =
   | 'leaf'
   | 'snowflake'
   | 'yin-yang'
-  | 'flame';
+  | 'flame'
+  | 'question-mark';
 
 /** A band orb's id is just `${band}-orb` — see bandOrbId(). Kept as a
  * template type (not a plain string) so callers get real autocomplete/
  * exhaustiveness rather than treating medallion ids as bare strings. */
 export type BandOrbId = `${BrainwaveBand}-orb`;
 
-export type MedallionId = MilestoneMedallionId | BandOrbId;
+export type MedallionId = MilestoneMedallionId | BandOrbId | MysteryMedallionId;
 
 export function bandOrbId(band: BrainwaveBand): BandOrbId {
   return `${band}-orb`;
@@ -53,7 +67,8 @@ export type UnlockRule =
   | { type: 'default' }
   | { type: 'band-minutes'; band: BrainwaveBand; minutes: number }
   | { type: 'total-minutes'; minutes: number }
-  | { type: 'streak-days'; days: number };
+  | { type: 'streak-days'; days: number }
+  | { type: 'mystery-harvest'; count: number };
 
 export interface MedallionDef {
   id: MedallionId;
@@ -150,6 +165,13 @@ const MILESTONE_MEDALLIONS: MedallionDef[] = [
     color: '#fb7185',
     unlock: { type: 'streak-days', days: 30 },
   },
+  {
+    id: 'question-mark',
+    name: 'Question Mark',
+    blurb: 'Harvest 10 mystery fruits from the Focus Garden.',
+    color: '#d8b4fe',
+    unlock: { type: 'mystery-harvest', count: 10 },
+  },
 ];
 
 /** Every medallion, band orbs first (they're the "starter" family a
@@ -164,3 +186,21 @@ export const MEDALLIONS_BY_ID: Record<MedallionId, MedallionDef> = Object.fromEn
 ) as Record<MedallionId, MedallionDef>;
 
 export const DEFAULT_MEDALLION_ID: MedallionId = 'spark';
+
+/** Minimal shape both a goal-driven MedallionDef and a MysteryMedallionDef
+ * satisfy — everything that only needs to know "what does this look like
+ * and what's it called" regardless of which family unlocked it (the
+ * pendant, MedallionIcon's own lookup) uses this merged dict instead of
+ * MEDALLIONS_BY_ID, which stays goal-driven-only for the places that
+ * genuinely need to iterate just that one family (the achievements grid,
+ * computeUnlockedMedallions). */
+export interface MedallionColorEntry {
+  id: MedallionId;
+  name: string;
+  color: string;
+}
+
+export const ALL_MEDALLIONS_BY_ID: Record<MedallionId, MedallionColorEntry> = {
+  ...MEDALLIONS_BY_ID,
+  ...MYSTERY_MEDALLIONS_BY_ID,
+} as Record<MedallionId, MedallionColorEntry>;

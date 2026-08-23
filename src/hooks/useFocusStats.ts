@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { BrainwaveBand } from '../data/bands';
 import { MEDALLIONS, type MedallionId } from '../data/medallions';
+import type { MysteryMedallionId } from '../data/mysteryMedallions';
 import {
   computeGrowth,
   computeStreak,
@@ -9,8 +10,18 @@ import {
   dateKeyFor,
   isMedallionUnlocked,
   totalMinutesAllBands,
+  type FocusStats,
 } from '../engine/growth';
+import { pendingMysteryFruitCount, rollMysteryMedallion } from '../engine/mysteryFruits';
 import { loadStats, saveStats, type PersistedStats } from '../storage/statsStorage';
+
+/** growth.ts's unlock checks (including the new 'mystery-harvest' rule) want
+ * a `mysteryHarvestCount` alongside the band/daily totals PersistedStats
+ * already carries — derived here rather than stored a second time, same
+ * "derive, don't duplicate" reasoning as everything else in this file. */
+function toFocusStats(stats: PersistedStats): FocusStats {
+  return { ...stats, mysteryHarvestCount: stats.mysteryUnlockedIds.length };
+}
 
 /** How often accumulated playtime is written to localStorage — debounced
  * like settingsStorage's save, though in practice this coalesces to
@@ -108,10 +119,18 @@ export function useFocusStats(isPlaying: boolean, band: BrainwaveBand) {
 
   const today = new Date();
   const streak = computeStreak(stats.dailySeconds, today);
-  const unlockedIds = computeUnlockedMedallions(stats, today);
+  const goalUnlockedIds = computeUnlockedMedallions(toFocusStats(stats), today);
+  // Every goal-driven unlock PLUS every mystery medallion ever harvested —
+  // this is what the pendant/picker/fractal-tree fruit all treat as "owned,
+  // equip-or-display-able," regardless of which of the two systems earned
+  // it. The achievements grid below still iterates MEDALLIONS (goal-only)
+  // directly, so the extra mystery ids in this combined list are simply
+  // irrelevant there, not a leak between the two families.
+  const unlockedIds: MedallionId[] = [...goalUnlockedIds, ...stats.mysteryUnlockedIds];
   const totalMinutes = totalMinutesAllBands(stats.totalSecondsByBand);
   const growth = computeGrowth(totalMinutes);
   const treeStage = currentTreeStage(totalMinutes);
+  const pendingMysteryCount = pendingMysteryFruitCount(totalMinutes, stats.mysteryUnlockedIds.length);
 
   // Celebrate newly-unlocked medallions: diff this render's unlocked set
   // against the previous one and surface whatever's new for a few seconds,
@@ -149,18 +168,50 @@ export function useFocusStats(isPlaying: boolean, band: BrainwaveBand) {
   /** Re-validates against a FRESH snapshot inside the updater (rather than
    * trusting the `unlockedIds` closed over at call time, which could be a
    * render behind) — so a click that's technically stale still can't
-   * select something not actually unlocked. */
+   * select something not actually unlocked. Mystery ids take a different
+   * check (already harvested?) since they're not in MEDALLIONS/
+   * isMedallionUnlocked at all — that whole pure-unlock-rule machinery is
+   * goal-driven-only, by design (see data/medallions.ts's file comment). */
   const setSelectedMedallionId = useCallback((id: MedallionId) => {
     setStats((current) => {
+      if (id.startsWith('mystery-')) {
+        if (!current.mysteryUnlockedIds.includes(id as MysteryMedallionId)) return current;
+        return { ...current, selectedMedallionId: id };
+      }
       const def = MEDALLIONS.find((m) => m.id === id);
       if (!def) return current;
       const streakNow = computeStreak(current.dailySeconds, new Date());
-      if (!isMedallionUnlocked(def, current, streakNow)) return current;
+      if (!isMedallionUnlocked(def, toFocusStats(current), streakNow)) return current;
       return { ...current, selectedMedallionId: id };
     });
   }, []);
 
   const dismissCelebration = useCallback(() => setJustUnlocked([]), []);
+
+  /** Harvests ONE pending mystery fruit: rolls a weighted-random medallion
+   * from everything not already owned, appends it to mysteryUnlockedIds
+   * (immediately — the roll itself is final the instant this is called, not
+   * once a caller's reveal animation finishes; see MysteryRollModal.tsx),
+   * and returns what was won so the caller can show it.
+   *
+   * The random roll deliberately happens OUTSIDE the setStats updater, not
+   * inside it — a setState updater must stay pure (React can and does
+   * invoke it more than once, e.g. under StrictMode, to catch exactly this
+   * kind of impurity), so calling Math.random()-based logic in there could
+   * silently roll twice per click. Reading statsRef.current up front (the
+   * same ref the debounced-save effect already relies on to avoid a stale
+   * closure) keeps the actual roll a single, real event-handler-time call,
+   * and the updater itself just appends the already-decided result. */
+  const harvestMysteryFruit = useCallback((): MysteryMedallionId | null => {
+    const current = statsRef.current;
+    const totalMinutesNow = totalMinutesAllBands(current.totalSecondsByBand);
+    const pendingNow = pendingMysteryFruitCount(totalMinutesNow, current.mysteryUnlockedIds.length);
+    if (pendingNow <= 0) return null;
+    const rolled = rollMysteryMedallion(new Set(current.mysteryUnlockedIds));
+    if (!rolled) return null;
+    setStats((latest) => (latest.mysteryUnlockedIds.includes(rolled) ? latest : { ...latest, mysteryUnlockedIds: [...latest.mysteryUnlockedIds, rolled] }));
+    return rolled;
+  }, []);
 
   return {
     stats,
@@ -173,5 +224,8 @@ export function useFocusStats(isPlaying: boolean, band: BrainwaveBand) {
     selectedMedallionId: stats.selectedMedallionId,
     setSelectedMedallionId,
     dismissCelebration,
+    mysteryOwnedIds: stats.mysteryUnlockedIds,
+    pendingMysteryCount,
+    harvestMysteryFruit,
   };
 }
