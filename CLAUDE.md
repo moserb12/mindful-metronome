@@ -3,6 +3,75 @@
 This file is read automatically by Claude Code at the start of every session
 in this repo. Keep it up to date as decisions get made.
 
+## Status update — pyramid/eye flourishes: focus-ring bug, idle "boredom," particles, focus mode
+
+**Real bug, root-caused rather than guessed at: clicking the eye or the
+pyramid showed "a weird white box"** that looked like it was fighting the
+wink/ping animation. Cause: both are custom `role="button" tabIndex={0}`
+SVG shapes (a `<circle>`, a closed `<path>`), not real `<button>`
+elements — browsers' `:focus-visible` heuristic isn't guaranteed to
+suppress on a plain mouse click for non-native interactive elements the
+way it does for real form controls, and the app's own generic
+`[tabindex]:focus-visible { outline: 2px solid ...; }` rule (meant for
+real buttons/inputs) drew exactly that outline on click. `outline` on an
+SVG element is ALWAYS an axis-aligned rectangle around the bounding box
+regardless of the element's actual shape — a visibly wrong box flashing
+over a round eye or triangular pyramid, right as the tap animation
+played. Fixed with shape-correct `:focus-visible` overrides instead of a
+blanket `outline: none` — `.eye-outer:focus-visible` gets a `stroke` ring
+(a circle's own stroke traces the circle), `.pyramid-hit-target:focus-visible`
+gets a `stroke` on its own closed-triangle path (traces the exact
+triangle). `.metronome-pendant:focus-visible` also got `outline: none` —
+same root cause, just less visible there since it already has its own
+proper glow+scale focus treatment on `.pendant-glyph` that the redundant
+box was sitting on top of.
+
+**The eye "gets bored"** — `data/moods.ts` gained a `maxFocusSec` field
+per band (delta 26s, most patient, down to gamma 6s, least patient — same
+personality curve as `breatheDurSec`/`wiggleMul`/etc.), read by the idle
+mouse-tracking effect in `MetronomeVisual.tsx`. If the pointer sits still
+longer than the CURRENT band's `maxFocusSec` (only while idle — playback
+still drives the pupil off the swing, unaffected), the eye stops waiting
+and starts glancing at small random points every ~2-4s (a new
+`.eye-pupil.wandering` CSS class, same cx/cy mechanism as real
+mouse-tracking but a slower 1.6s transition) until a real pointermove
+interrupts it, which immediately hands control back to the cursor and
+restarts the countdown. Switching bands while idle re-times the countdown
+to the new band. Gated behind `prefers-reduced-motion` like every other
+ambient animation in this file. Verified live: forced gamma via the real
+UI, confirmed the pupil moved on its own (and kept moving, a repeating
+cycle, not a one-off) after 6s of stillness with zero pointer input, and
+that a real mouse move immediately cancelled it.
+
+**Ambient particles** (`AMBIENT_PARTICLES` in `MetronomeVisual.tsx`): 9
+small dots drifting slowly around the pyramid, tinted with the live
+`--band-color`, purely decorative (`aria-hidden`, `pointer-events: none`).
+Scatter is computed once at module load (not per-render), same
+"don't reshuffle position on every re-render" reasoning the fractal
+tree's own branch jitter uses, though here a plain one-time
+`Math.random()` is enough since it only needs to stay stable across
+re-renders of one mounted instance, not identical across separate mounts.
+Hidden entirely under `prefers-reduced-motion`.
+
+**Focus mode** — a new ⛶/✕ toggle button anchored to the pyramid's own
+corner (via a new `.metronome-visual-frame` wrapper in `App.tsx`, since
+`.metronome-stage` itself is much wider than the visual and a
+`position:absolute` child would otherwise anchor to the wrong box).
+Collapses the whole page down to just the visual + play/pause button,
+full-viewport, generous padding, clean background — title, SessionTimer,
+AcousticVisualizer, ControlPanel, FocusDashboard, AccountPoll, footer,
+and the UFO banner all unmount via plain JSX conditionals rather than
+just being hidden with CSS. ⚠️ **Deliberately a CSS overlay
+(`position: fixed; inset: 0;`), NOT the real Fullscreen API** — the
+native API needs to be called from a user gesture, shows an intrusive
+one-time "press Esc to exit" browser banner, and exits ITSELF on Escape
+(which would race a second, app-owned Escape handler doing the same
+thing) — a plain takeover gets the identical practical result (fill the
+screen, hide the chrome) without any of that, and behaves identically
+across browsers. Escape exits it; body scroll is locked while active
+(nothing else is left mounted behind the fixed overlay at that point, so
+this is just insurance against a phantom scrollbar).
+
 ## Status update — animation-pass consistency fix; yin-yang's missing dot
 
 Two real bugs the builder caught by eye after the previous two passes.

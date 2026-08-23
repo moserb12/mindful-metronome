@@ -77,6 +77,37 @@ const BASE_LEFT = { x: 62, y: 322 };
 const BASE_RIGHT = { x: 338, y: 322 };
 const EYE = { x: 200, y: 224 };
 
+/** A handful of ambient particles drifting slowly around the pyramid —
+ * purely decorative (aria-hidden, pointer-events: none), tinted with the
+ * live `--band-color` so they shift with whichever vibe is active. Scatter
+ * is computed ONCE at module load, not per-render/mount — a fresh
+ * scatter each page load is fine (even welcome, for variety) but they'd
+ * look broken if they re-randomized position on every React re-render,
+ * the same reasoning the fractal tree's own branch jitter avoids
+ * `Math.random()` for (see engine/fractalTree.ts's seededRandom doc
+ * comment) — the difference here is this only needs to be stable across
+ * RE-RENDERS of one mounted instance, not byte-identical across mounts,
+ * so a plain one-time Math.random() at module scope is enough. */
+interface AmbientParticle {
+  cx: number;
+  cy: number;
+  r: number;
+  durSec: number;
+  delaySec: number;
+}
+const AMBIENT_PARTICLE_COUNT = 9;
+const AMBIENT_PARTICLES: AmbientParticle[] = Array.from({ length: AMBIENT_PARTICLE_COUNT }, () => ({
+  cx: 24 + Math.random() * (VIEW - 48),
+  cy: 24 + Math.random() * (VIEW - 48),
+  r: 1 + Math.random() * 1.8,
+  durSec: 11 + Math.random() * 9,
+  // Negative delay starts each particle mid-cycle (CSS runs the animation
+  // as though it had already been playing for |delay| seconds) so all 9
+  // don't fade in together on mount, reading as already-ambient rather
+  // than freshly spawned.
+  delaySec: -Math.random() * 18,
+}));
+
 /**
  * Degrees to feed the arm's `rotate(deg, cx, cy)` SVG transform so that a
  * line initially pointing straight down from `from` ends up pointing at
@@ -1028,19 +1059,78 @@ export function MetronomeVisual({
   // sessionPhase at 'ended' for a few seconds so the eye's completed
   // clock face (numeral "0:00", hand at 12) has time to actually read as
   // finished — mouse-tracking taking over instantly would erase that.
+  //
+  // Within this idle mode, the eye also "gets bored": if the pointer sits
+  // still for longer than the current band's own maxFocusSec (see
+  // data/moods.ts — calmer bands are more patient, energized ones get
+  // restless fast), it stops waiting and starts glancing around on its
+  // own until real movement resumes. This is a THIRD pupil sub-mode
+  // layered inside the same effect (not a separate one) specifically
+  // because it needs to share handlePointerMove's own idle/activity
+  // bookkeeping — splitting it out would mean two effects both racing to
+  // decide who owns the pointermove listener.
   useEffect(() => {
     if (isPlaying || sessionPhase === 'ended') return;
     const svg = svgRef.current;
     const pupil = pupilRef.current;
     if (!svg || !pupil) return;
 
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     let armed = false;
     let armRafId: number | null = null;
+    let idleTimeoutId: ReturnType<typeof setTimeout> | null = null;
+    let wanderTimeoutId: ReturnType<typeof setTimeout> | null = null;
+    let wandering = false;
+
+    function stopWandering() {
+      if (wanderTimeoutId !== null) {
+        clearTimeout(wanderTimeoutId);
+        wanderTimeoutId = null;
+      }
+      if (wandering) {
+        wandering = false;
+        pupil!.classList.remove('wandering');
+      }
+    }
+
+    /** One "glance": a new small random gaze point, held for a few
+     * seconds, then replaced by another — repeats indefinitely until a
+     * real pointermove interrupts it via stopWandering(). Reuses the same
+     * PUPIL_MAX_OFFSET bound mouse-tracking does, at a partial (0.4-1.0)
+     * reach so it reads as idle glancing around, not a hard stare in a
+     * random direction every time. */
+    function scheduleGlance() {
+      const angle = Math.random() * Math.PI * 2;
+      const reach = 0.4 + Math.random() * 0.6;
+      const offsetX = Math.cos(angle) * PUPIL_MAX_OFFSET * reach;
+      const offsetY = Math.sin(angle) * PUPIL_MAX_OFFSET * reach;
+      pupil!.setAttribute('cx', String(EYE.x + offsetX));
+      pupil!.setAttribute('cy', String(EYE.y + offsetY));
+      wanderTimeoutId = setTimeout(scheduleGlance, 2200 + Math.random() * 2600);
+    }
+
+    function startWandering() {
+      if (reduceMotion || wandering || settlingRef.current) return;
+      wandering = true;
+      pupil!.classList.add('wandering');
+      scheduleGlance();
+    }
+
+    /** (Re)starts the "how long until bored" countdown — called once on
+     * arm (nothing's moved yet either) and again on every real
+     * pointermove, the standard debounce-style idle-timer shape. */
+    function scheduleIdleTimeout() {
+      if (idleTimeoutId !== null) clearTimeout(idleTimeoutId);
+      if (reduceMotion) return;
+      idleTimeoutId = setTimeout(startWandering, mood.maxFocusSec * 1000);
+    }
 
     function handlePointerMove(e: PointerEvent) {
       // Defensive re-check: even once armed, never fight the settle-tail
       // for control of cx/cy (see settlingRef's doc comment).
       if (settlingRef.current) return;
+      stopWandering();
+      scheduleIdleTimeout();
       const rect = svg!.getBoundingClientRect();
       if (rect.width === 0 || rect.height === 0) return;
       const scaleX = VIEW / rect.width;
@@ -1073,19 +1163,26 @@ export function MetronomeVisual({
       armed = true;
       pupil!.classList.add('tracking');
       window.addEventListener('pointermove', handlePointerMove);
+      scheduleIdleTimeout();
     }
     tryArm();
 
     return () => {
       if (armRafId !== null) cancelAnimationFrame(armRafId);
+      if (idleTimeoutId !== null) clearTimeout(idleTimeoutId);
+      stopWandering();
       if (armed) {
         window.removeEventListener('pointermove', handlePointerMove);
-        pupil.classList.remove('tracking');
+        pupil.classList.remove('tracking', 'wandering');
         pupil.setAttribute('cx', String(EYE.x));
         pupil.setAttribute('cy', String(EYE.y));
       }
     };
-  }, [isPlaying, sessionPhase]);
+    // band (not `mood`, a fresh object every render) is the real
+    // dependency — switching presets while idle should re-time the
+    // boredom countdown to the new band's own maxFocusSec.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isPlaying, sessionPhase, band]);
 
   return (
     <div
@@ -1107,6 +1204,20 @@ export function MetronomeVisual({
         role="img"
         aria-label="Mindful Metronome visual"
       >
+        {/* Ambient particles — rendered first so they sit BEHIND everything
+            else (pyramid, eye, pendulum). Purely decorative. */}
+        <g className="ambient-particles" aria-hidden="true">
+          {AMBIENT_PARTICLES.map((p, i) => (
+            <circle
+              key={i}
+              cx={p.cx}
+              cy={p.cy}
+              r={p.r}
+              style={{ '--particle-dur': `${p.durSec}s`, '--particle-delay': `${p.delaySec}s` } as React.CSSProperties}
+            />
+          ))}
+        </g>
+
         {/* Invisible, geometry-only tap target — the full closed triangle,
             same as this element used to be before its base edge was split
             out into separate neutral/mouth paths below (see §4 of the

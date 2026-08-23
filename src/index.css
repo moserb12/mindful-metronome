@@ -201,12 +201,75 @@ select:hover {
   gap: 28px;
 }
 
+/* ---------- Focus mode ---------- */
+/* A CSS-only "fill the screen, hide the chrome" takeover — see App.tsx's
+   own doc comment on why this isn't the native Fullscreen API. Toggling
+   is entirely App.tsx's job (mounting/unmounting the title, SessionTimer,
+   AcousticVisualizer, ControlPanel, FocusDashboard, AccountPoll, footer,
+   and UFO banner via plain JSX conditionals); this class only handles the
+   TWO things that stay mounted in both modes (.metronome-stage itself and
+   .metronome-visual-frame inside it) growing to fill the viewport. */
+.focus-mode-toggle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--surface-border);
+  border-radius: 10px;
+  color: var(--text-muted);
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: border-color var(--dur-base) var(--ease-soft), color var(--dur-base) var(--ease-soft),
+    transform var(--dur-fast) var(--ease-harmonic);
+}
+.focus-mode-toggle:hover {
+  border-color: color-mix(in srgb, var(--band-color, #a78bfa) 45%, var(--surface-border));
+  color: var(--text);
+  transform: translateY(-1px);
+}
+.focus-mode-toggle:active {
+  transform: translateY(0) scale(0.94);
+}
+
+.metronome-stage.focus-mode {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: var(--bg-0);
+  /* "A good balance of padding to let it breathe" — generous on every
+     side, biased vertically so a wide/short viewport still gets real
+     breathing room above and below rather than the visual touching the
+     top and bottom edges. */
+  padding: 8vh 6vw;
+  justify-content: center;
+}
+.metronome-stage.focus-mode .metronome-visual-frame {
+  width: min(72vh, 88vw, 640px);
+}
+
 /* ---------- Metronome visual ---------- */
 
-.metronome-visual {
+/* .metronome-visual-frame carries the actual size (so the focus-mode
+   toggle button below can anchor precisely to its corner via
+   position:absolute regardless of .metronome-stage's own, much wider,
+   flex-container width) — .metronome-visual itself just fills whatever
+   size the frame gives it. See the "Focus mode" section further down for
+   the enlarged focus-mode override on the frame. */
+.metronome-visual-frame {
   position: relative;
   width: min(88vw, 380px);
   aspect-ratio: 1;
+}
+.metronome-visual {
+  position: relative;
+  width: 100%;
+  height: 100%;
   animation: panel-rise var(--dur-slow) var(--ease-soft) both;
   animation-delay: 0.08s;
 }
@@ -222,6 +285,42 @@ select:hover {
   width: 100%;
   height: 100%;
   overflow: visible;
+}
+
+/* Ambient particles — a handful of small dots drifting slowly around the
+   pyramid, tinted with the live --band-color. Purely decorative: no
+   pointer-events, aria-hidden in the markup. Each circle's own duration/
+   delay come in via inline custom properties (see AMBIENT_PARTICLES in
+   MetronomeVisual.tsx) so every particle drifts at its own pace instead
+   of all nine breathing in lockstep. */
+.ambient-particles {
+  pointer-events: none;
+}
+.ambient-particles circle {
+  fill: var(--band-color, #a78bfa);
+  opacity: 0;
+  animation: ambient-particle-drift var(--particle-dur, 16s) ease-in-out infinite;
+  animation-delay: var(--particle-delay, 0s);
+}
+@keyframes ambient-particle-drift {
+  0% {
+    opacity: 0;
+    transform: translate(0, 0);
+  }
+  12% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 0.6;
+    transform: translate(7px, -16px);
+  }
+  88% {
+    opacity: 0.15;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-5px, -28px);
+  }
 }
 
 /* Invisible geometry-only tap target — see the long comment on this
@@ -416,6 +515,36 @@ select:hover {
   transform-origin: center;
   animation: eye-breathe var(--mood-breathe-dur, 5.5s) var(--ease-soft) infinite;
   cursor: pointer;
+  outline: none;
+}
+/* Both the eye and the pyramid are custom `role="button"` SVG shapes (a
+   <circle> and a closed <path>), not real <button> elements — browsers'
+   focus-visible heuristic isn't guaranteed to suppress on a plain mouse
+   click for those the way it does for native controls, and the generic
+   `[tabindex]:focus-visible` rule up top draws a plain CSS `outline`,
+   which SVG always renders as an axis-aligned RECTANGLE around the
+   element's bounding box regardless of its actual shape — a visibly wrong
+   box flashing over a round eye or triangular pyramid right as the
+   tap-response animation plays, reported directly as "a weird white box."
+   Fixed here with a shape-correct `stroke` ring instead (a circle's own
+   stroke traces the circle; the hit-target's stroke traces the exact
+   closed triangle path it already IS), not a generic bounding-box
+   outline. */
+.eye-outer:focus-visible {
+  stroke: var(--band-color, #a78bfa);
+  stroke-width: 2;
+}
+.pyramid-hit-target:focus-visible {
+  outline: none;
+  stroke: var(--band-color, #a78bfa);
+  stroke-width: 2;
+}
+/* The pendant already gets its own shape-correct focus treatment (the
+   glow+scale on .pendant-glyph, right below) — this just removes the
+   SAME redundant rectangular box the eye/pyramid had, which would
+   otherwise sit on top of that and look like visual noise. */
+.metronome-pendant:focus-visible {
+  outline: none;
 }
 /* A quick squash-and-return "wink" on tap — touches only the outer ring's
    own transform, never the pupil's cx/cy (those belong exclusively to the
@@ -475,6 +604,16 @@ select:hover {
    pupil perpetually lag behind the beat instead of syncing crisply. */
 .eye-pupil.tracking {
   transition: cx 0.28s var(--ease-soft), cy 0.28s var(--ease-soft);
+}
+/* The eye "getting bored" — a slower, more deliberate drift than the
+   snappy mouse-follow above (same cx/cy properties, just a longer,
+   dreamier duration), toggled on top of .tracking once the current
+   band's own maxFocusSec (data/moods.ts) elapses with no pointer
+   movement. Higher specificity than .eye-pupil.tracking alone wins while
+   both classes are present; removing .wandering on the next real
+   pointermove drops straight back to the snappy duration. */
+.eye-pupil.tracking.wandering {
+  transition: cx 1.6s var(--ease-soft), cy 1.6s var(--ease-soft);
 }
 /* Session countdown ring — an annular band living entirely outside
    eye-outer (see EYE_TIMER_INNER_R/EYE_TIMER_OUTER_R in
@@ -1417,7 +1556,11 @@ details[open] > .control-group-summary .control-group-chevron,
   .medallion-picker {
     animation: none;
   }
-  .eye-pupil.tracking {
+  .ambient-particles {
+    display: none;
+  }
+  .eye-pupil.tracking,
+  .eye-pupil.tracking.wandering {
     transition: none;
   }
   .eye-timer-ticks,
