@@ -69,9 +69,14 @@ export function mysteryFruitsGrown(totalMinutes: number): number {
 /** Grown-but-not-yet-harvested fruit — these are the "? balls" waiting on
  * the ground. `harvestedCount` is PersistedStats.mysteryUnlockedIds.length,
  * passed in rather than read here so this file stays free of any storage
- * dependency. */
-export function pendingMysteryFruitCount(totalMinutes: number, harvestedCount: number): number {
-  return Math.max(0, mysteryFruitsGrown(totalMinutes) - harvestedCount);
+ * dependency. `bonusFruits` adds in fruit granted outside the time-based
+ * schedule entirely — currently just the watering can's first-of-the-day
+ * bonus (PersistedStats.wateringBonusFruits) — so a watering-triggered
+ * fruit shows up as pending the same way a time-grown one does, without
+ * needing its own separate "pending" concept anywhere downstream. Defaults
+ * to 0 so every existing 2-argument call site keeps working unchanged. */
+export function pendingMysteryFruitCount(totalMinutes: number, harvestedCount: number, bonusFruits: number = 0): number {
+  return Math.max(0, mysteryFruitsGrown(totalMinutes) + bonusFruits - harvestedCount);
 }
 
 /**

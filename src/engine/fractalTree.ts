@@ -56,6 +56,11 @@ export interface TreeTip {
 export interface FractalTree {
   branches: TreeBranch[];
   tips: TreeTip[];
+  /** Every branch's endpoint — interior split points AND outer tips alike.
+   * Superset of `tips`. This is the pool fruit placement should draw from
+   * (see pickFruitSlots) so fruit reads as growing throughout the whole
+   * tree rather than clustering only along the outermost edge. */
+  fruitSlots: TreeTip[];
   maxDepth: number;
 }
 
@@ -75,12 +80,20 @@ export function generateFractalTree(growth: number): FractalTree {
 
   const branches: TreeBranch[] = [];
   const tips: TreeTip[] = [];
+  const fruitSlots: TreeTip[] = [];
   let tipIndex = 0;
+  let slotIndex = 0;
 
   function branch(x: number, y: number, angle: number, length: number, depth: number, seed: number) {
     const x2 = x + Math.cos(angle) * length;
     const y2 = y + Math.sin(angle) * length;
     branches.push({ x1: x, y1: y, x2, y2, depth });
+
+    // Every branch endpoint is a fruit-eligible slot — a split point if it
+    // has children, a tip if it doesn't — so fruit can grow throughout the
+    // tree's interior, not just along the outermost edge.
+    fruitSlots.push({ x: x2, y: y2, index: slotIndex });
+    slotIndex += 1;
 
     if (depth >= maxDepth || length < 4) {
       tips.push({ x: x2, y: y2, index: tipIndex });
@@ -101,20 +114,21 @@ export function generateFractalTree(growth: number): FractalTree {
 
   branch(BASE.x, BASE.y, BASE_ANGLE, BASE_LENGTH * lengthMultiplier, 0, 1);
 
-  return { branches, tips, maxDepth };
+  return { branches, tips, fruitSlots, maxDepth };
 }
 
-/** Deterministically spreads `count` fruit across `tips`, evenly stepping
- * through the array rather than always taking the first N (which would
- * cluster every fruit on one side, since the recursion visits "angle minus
- * spread" branches before "angle plus spread" ones at every level). */
-export function pickFruitTips(tips: TreeTip[], count: number): TreeTip[] {
-  if (count <= 0 || tips.length === 0) return [];
-  if (count >= tips.length) return tips;
-  const step = tips.length / count;
+/** Deterministically spreads `count` fruit across a pool of candidate slots
+ * (branch-split points and/or tips), evenly stepping through the array
+ * rather than always taking the first N (which would cluster every fruit
+ * on one side, since the recursion visits "angle minus spread" branches
+ * before "angle plus spread" ones at every level). */
+export function pickFruitTips(slots: TreeTip[], count: number): TreeTip[] {
+  if (count <= 0 || slots.length === 0) return [];
+  if (count >= slots.length) return slots;
+  const step = slots.length / count;
   const picked: TreeTip[] = [];
   for (let i = 0; i < count; i++) {
-    picked.push(tips[Math.floor(i * step)]);
+    picked.push(slots[Math.floor(i * step)]);
   }
   return picked;
 }

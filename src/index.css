@@ -403,13 +403,33 @@ select:hover {
    keyframe produces a different-feeling spin per band without needing a
    keyframe per band. A direct response to a user's own tap (not idle/
    ambient looping), so — like .tempo-weight's hover/active transforms —
-   it's intentionally NOT disabled under prefers-reduced-motion. */
+   it's intentionally NOT disabled under prefers-reduced-motion.
+
+   Two-phase motion, for a more physical "something with real mass wound
+   up and let go" feel rather than an instant launch: a brief WIND-UP
+   pulls the pyramid backward a little first (0%→14%, eased IN — starts
+   slow, accelerates into the pull-back), then the main spin releases
+   forward past zero all the way to --pyramid-spin-end (14%→100%, using
+   the band's own --pyramid-spin-ease). Per-keyframe
+   animation-timing-function governs the segment LEADING INTO that
+   keyframe, so 0%'s ease-in shapes the wind-up and 14%'s ease shapes the
+   release — no JS sequencing or separate animations needed. The 40%
+   glow keyframe deliberately omits `transform`; browsers interpolate a
+   property straight between the nearest keyframes that DO define it, so
+   the rotation itself still flows continuously from 14% to 100% while
+   the glow gets a stop point of its own. */
 @keyframes pyramid-spin {
   0% {
     transform: rotateY(0deg);
     filter: drop-shadow(0 0 0 transparent);
+    animation-timing-function: ease-in;
   }
-  35% {
+  14% {
+    transform: rotateY(-14deg);
+    filter: drop-shadow(0 0 0 transparent);
+    animation-timing-function: var(--pyramid-spin-ease, var(--ease-harmonic));
+  }
+  40% {
     filter: drop-shadow(0 0 22px var(--band-glow, rgba(167, 139, 250, 0.9)));
   }
   100% {
@@ -418,7 +438,7 @@ select:hover {
   }
 }
 .pyramid-group.pyramid-spin {
-  animation: pyramid-spin var(--pyramid-spin-dur, 0.9s) var(--pyramid-spin-ease, var(--ease-harmonic)) 1;
+  animation: pyramid-spin var(--pyramid-spin-dur, 0.9s) linear 1;
 }
 
 .metronome-arm-line {
@@ -1788,6 +1808,137 @@ details[open] > .control-group-summary .control-group-chevron,
     transform: translateY(-2.5px);
   }
 }
+/* Wraps the tree SVG + the watering can so the can can be positioned
+   relative to the tree itself ("near the tree," per the ask) without the
+   tree-card's own flex layout (align-items: center; text-align: center)
+   having to change. */
+.tree-card-stage {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  width: 100%;
+}
+.watering-can-wrap {
+  position: absolute;
+  right: 8%;
+  bottom: 2%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+.watering-can-button {
+  background: none;
+  border: none;
+  padding: 4px;
+  margin: 0;
+  cursor: pointer;
+  line-height: 0;
+  border-radius: 50%;
+  transition: transform var(--dur-fast) var(--ease-harmonic);
+}
+.watering-can-button:hover {
+  transform: scale(1.08);
+}
+.watering-can-button:active {
+  transform: scale(0.94);
+}
+.watering-can-svg {
+  width: 34px;
+  height: 34px;
+  overflow: visible;
+  filter: drop-shadow(0 0 4px rgba(0, 0, 0, 0.35));
+}
+.watering-can-body {
+  fill: rgba(255, 255, 255, 0.08);
+  stroke: var(--text-faint);
+  stroke-width: 2;
+}
+.watering-can-outline {
+  stroke: var(--text-faint);
+  stroke-width: 2;
+}
+.watering-can-rim {
+  fill: rgba(0, 0, 0, 0.18);
+}
+
+/* One-shot pour flourish on click — same toggled-class-plus-timeout shape
+   as .pyramid-group.pyramid-spin/.eye-outer.eye-wink elsewhere in this
+   app. The can body tilts forward around roughly its own base/spout
+   corner, and three droplets fall from the spout tip in a staggered
+   sequence while it's tilted. A direct response to a user's own tap, so —
+   same reasoning as those other flourishes — intentionally not disabled
+   under prefers-reduced-motion. */
+.watering-can-tilt-group {
+  transform-box: fill-box;
+  transform-origin: 75% 55%;
+}
+.watering-can-button.pouring .watering-can-tilt-group {
+  animation: watering-can-tilt 0.9s var(--ease-harmonic) 1;
+}
+@keyframes watering-can-tilt {
+  0% {
+    transform: rotate(0deg);
+  }
+  35% {
+    transform: rotate(-32deg);
+  }
+  72% {
+    transform: rotate(-32deg);
+  }
+  100% {
+    transform: rotate(0deg);
+  }
+}
+.watering-can-droplet {
+  fill: var(--band-color, #7dd3fc);
+  opacity: 0;
+}
+.watering-can-button.pouring .watering-can-droplet-1 {
+  animation: watering-can-drop 0.55s ease-in 0.32s 1;
+}
+.watering-can-button.pouring .watering-can-droplet-2 {
+  animation: watering-can-drop 0.55s ease-in 0.42s 1;
+}
+.watering-can-button.pouring .watering-can-droplet-3 {
+  animation: watering-can-drop 0.55s ease-in 0.5s 1;
+}
+@keyframes watering-can-drop {
+  0% {
+    opacity: 0;
+    transform: translateY(0);
+  }
+  20% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(13px);
+  }
+}
+
+.watering-can-bonus-callout {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--surface-border);
+  border-radius: 999px;
+  padding: 3px 10px;
+  white-space: nowrap;
+  animation: watering-can-callout-in var(--dur-base) var(--ease-harmonic) both;
+}
+@keyframes watering-can-callout-in {
+  0% {
+    opacity: 0;
+    transform: translateY(4px) scale(0.9);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
 .tree-card-caption {
   display: flex;
   align-items: baseline;
@@ -1801,6 +1952,55 @@ details[open] > .control-group-summary .control-group-chevron,
   font-size: 0.78rem;
   color: var(--text-faint);
   font-variant-numeric: tabular-nums;
+}
+
+/* One random line (data/mysticalQuotes.ts) shown just below the tree's
+   name/growth line — purely decorative flavor text, never re-picked on
+   re-render (see FocusDashboard's lazy useState init). */
+.tree-mystical-quote {
+  font-size: 0.76rem;
+  font-style: italic;
+  color: var(--text-faint);
+  max-width: 30ch;
+  margin: 0;
+}
+
+/* The longer explanatory copy about how the tree/watering/mystery-fruit
+   mechanics work, tucked behind a small "i" toggle instead of always
+   shown — a plain native <details>/<summary> (same disclosure pattern
+   the mystery-collection section below already uses), just styled so the
+   summary itself reads as a compact round info icon rather than a
+   textual link with a default triangle marker. */
+.tree-card-info {
+  width: 100%;
+}
+.tree-card-info-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin: 0 auto;
+  border-radius: 50%;
+  border: 1px solid var(--surface-border);
+  color: var(--text-faint);
+  font-size: 0.72rem;
+  font-style: italic;
+  font-weight: 700;
+  cursor: pointer;
+  list-style: none;
+  transition: border-color var(--dur-base) var(--ease-soft), color var(--dur-base) var(--ease-soft);
+}
+.tree-card-info-icon::-webkit-details-marker {
+  display: none;
+}
+.tree-card-info-icon:hover,
+.tree-card-info[open] .tree-card-info-icon {
+  border-color: color-mix(in srgb, var(--band-color, #a78bfa) 55%, var(--surface-border));
+  color: var(--text);
+}
+.tree-card-info .control-hint {
+  margin-top: 8px;
 }
 
 .stats-card .band-duration-list {

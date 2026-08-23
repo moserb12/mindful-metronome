@@ -17,6 +17,7 @@ describe('statsStorage', () => {
     expect(stats.dailySeconds).toEqual({});
     expect(stats.selectedMedallionId).toBe(DEFAULT_MEDALLION_ID);
     expect(stats.mysteryUnlockedIds).toEqual([]);
+    expect(stats.wateringBonusFruits).toBe(0);
   });
 
   it('round-trips a valid save through load, including harvested mystery medallions', () => {
@@ -25,6 +26,7 @@ describe('statsStorage', () => {
       dailySeconds: { '2026-08-22': 90 },
       selectedMedallionId: 'star',
       mysteryUnlockedIds: [MYSTERY_MEDALLIONS[0].id, MYSTERY_MEDALLIONS[1].id],
+      wateringBonusFruits: 2,
     };
     saveStats(stats);
     expect(loadStats()).toEqual(stats);
@@ -36,9 +38,23 @@ describe('statsStorage', () => {
       dailySeconds: {},
       selectedMedallionId: MYSTERY_MEDALLIONS[0].id,
       mysteryUnlockedIds: [MYSTERY_MEDALLIONS[0].id],
+      wateringBonusFruits: 0,
     };
     saveStats(stats);
     expect(loadStats().selectedMedallionId).toBe(MYSTERY_MEDALLIONS[0].id);
+  });
+
+  it('drops a corrupt watering-bonus value and falls back to 0', () => {
+    window.localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        totalSecondsByBand: emptySecondsByBand(),
+        dailySeconds: {},
+        selectedMedallionId: 'spark',
+        wateringBonusFruits: -3,
+      })
+    );
+    expect(loadStats().wateringBonusFruits).toBe(0);
   });
 
   it('drops unknown or duplicate mystery ids without discarding the valid ones', () => {

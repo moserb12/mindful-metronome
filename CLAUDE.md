@@ -3,6 +3,143 @@
 This file is read automatically by Claude Code at the start of every session
 in this repo. Keep it up to date as decisions get made.
 
+## Status update — spin wind-up/slowdown, fruit at every branch split, watering can + bonus fruit
+
+Four changes from one round of direct feedback on the Focus Garden and the
+pyramid tap-spin, all in `mindful-metronome` (not to be confused with the
+unrelated `Brain-Balance-Beats` kids'-training repo that sometimes shares a
+session with this one — check `git remote -v` if ever unsure which repo a
+shell is sitting in).
+
+**1. Pyramid tap-spin: slower, with a real wind-up.** The spin felt too
+fast on the multi-turn bands and launched instantly with no anticipation.
+Two changes, both `.pyramid-group.pyramid-spin`'s keyframe in `index.css`:
+- The `pyramid-spin` keyframe now has a genuine two-phase motion instead of
+  one smooth 0→end rotation: the first 14% of the duration is a WIND-UP
+  that pulls the pyramid backward to -14deg (eased in — starts slow,
+  accelerates into the pull-back), then the remaining 86% is the release,
+  spinning forward past zero all the way to `--pyramid-spin-end` using the
+  band's own `--pyramid-spin-ease`. This relies on a lesser-used CSS
+  feature: a `@keyframes` percentage block can declare its own
+  `animation-timing-function`, which governs the segment LEADING INTO that
+  keyframe — so 0%'s `ease-in` shapes the wind-up and 14%'s band-ease
+  shapes the release, with no JS sequencing needed. The 40% glow stop
+  deliberately omits `transform`, so the rotation itself still interpolates
+  continuously straight from 14% to 100% (browsers interpolate a property
+  between the nearest keyframes that define it) while the glow gets its own
+  timing. The animation shorthand's own base timing function is now
+  `linear` — every segment that matters has its own explicit per-keyframe
+  timing-function, so the shorthand only matters as a fallback.
+- `MOOD_BY_BAND.tapSpinDurationSec` (`data/moods.ts`) went up across every
+  band, more so for the higher-turn-count ones per the specific complaint
+  about "multiple rotations": delta 1.3→1.45s, theta 1.15→1.5s, alpha
+  0.95→1.25s, beta 0.75→1.05s, gamma 0.6→0.95s. Turn counts
+  (`tapSpinTurns`) are unchanged — only how long each spin takes to
+  complete. Verified live via Playwright: sampled `.pyramid-group`'s
+  computed `transform` every 80ms after a tap and confirmed a small
+  rotation growing in one direction (the wind-up) before it reverses into
+  a much larger continuous spin that settles back to identity right around
+  each band's new duration.
+
+**2. Fruit grows at every branch split, not just the outer tips.**
+`engine/fractalTree.ts`'s `generateFractalTree()` previously only
+collected leaf-tip endpoints into `tips[]`; interior branch-split
+endpoints were computed (as every branch's own `x2,y2`) but never kept
+anywhere, so fruit placement (`pickFruitTips`) could only ever land on the
+canopy's outer edge — visible in the builder's own screenshot as fruit
+clustered along the extremities. Fixed by adding a new `fruitSlots:
+TreeTip[]` array to `FractalTree`, populated with EVERY branch's endpoint
+(interior splits AND tips alike) during the recursive `branch()` walk.
+`components/Dashboard/FractalTree.tsx` now calls
+`pickFruitTips(fruitSlots, unlockedIds.length)` instead of
+`pickFruitTips(tips, ...)` — `tips` itself is untouched and still drives
+the small ambient leaf dots. `pickFruitTips`'s own signature/behavior
+didn't need to change, just which pool it's handed; its parameter was
+renamed `slots` to reflect the broader input. New test coverage in
+`fractalTree.test.ts` confirms `fruitSlots.length === branches.length`
+(one slot per branch) and that it's a strict superset of `tips`.
+
+**3. What the tree looks like at 25%/50%/100% growth** — captured live via
+Playwright by seeding `localStorage`'s `totalSecondsByBand` to hit
+`totalMinutesAllBands` of 300/600/1200 (`MAX_GROWTH_MINUTES = 1200` in
+`engine/growth.ts`, so those are exactly 25/50/100%) and screenshotting
+`.tree-card`. At 25% the tree is still labelled "Full Tree" (an early tree
+stage name, not literally "fully mature") with a handful of interior/tip
+fruit; by 50-100% the canopy is denser and fruit is visibly distributed
+through the branch structure rather than only ringing the outside edge —
+exactly the effect change #2 above was for. These were one-off diagnostic
+screenshots for the builder, not saved anywhere in the repo.
+
+**4. New feature: a watering can beside the tree, with a first-watering-
+of-the-day bonus fruit.** `components/Dashboard/WateringCan.tsx` is a
+small hand-drawn SVG can (same "thin strokes, no external assets" visual
+language as `MedallionIcon`), rendered inside a new `.tree-card-stage`
+wrapper alongside `<FractalTree>` in `FocusDashboard.tsx`. Clicking it:
+- **Always waters today** — `useFocusStats.waterTree()` bumps
+  `dailySeconds[todayKey]` up to `WATER_THRESHOLD_SEC` (60s) if it isn't
+  there already, the exact same threshold real practice uses, so
+  `computeStreak`'s `wateredToday`/the streak treat a can-click identically
+  to a genuine session. It deliberately does NOT touch
+  `totalSecondsByBand` — that field drives tree growth and mystery-fruit
+  timing, and a click must never be able to inflate either, keeping the
+  "everything derives from real practice" invariant this app leans on
+  everywhere else intact.
+- **Grants one bonus mystery fruit on the day's first watering, by ANY
+  means.** A new `wateringBonusFruits: number` field on `PersistedStats`
+  (`storage/statsStorage.ts`, sanitized/defaulted to 0 like every other
+  numeric field there) is incremented only when today wasn't already
+  watered before the click — whether that prior watering came from real
+  practice crossing 60s or an earlier can-click that same day. `waterTree`
+  reads `statsRef.current` synchronously (same pattern as
+  `harvestMysteryFruit`'s `pendingNow` check) to decide this once outside
+  the `setStats` updater, and returns whether THIS call was the first
+  watering so the component can react immediately. `pendingMysteryFruitCount`
+  (`engine/mysteryFruits.ts`) took a new optional third `bonusFruits = 0`
+  parameter (default keeps every existing 2-arg call site working
+  unchanged) and now adds it in alongside the time-grown count — so a
+  watering-triggered fruit shows up on `MysteryFruitGround` exactly like a
+  time-grown one, no separate "pending" concept needed downstream.
+  Harvesting drains it the same way it drains the time-grown count: by
+  `mysteryUnlockedIds.length` growing, not by decrementing the bonus field
+  directly.
+- The can itself is a pure trigger + flourish, same division of labor as
+  `pyramidPinging`/`eyeWinking` in `MetronomeVisual.tsx`: a toggled
+  `pouring` class plays a tilt-forward + falling-droplets CSS animation on
+  click, and on a granted bonus a small "A mystery fruit fell!" callout
+  shows for ~1.7s. Verified live via Playwright end-to-end: a fresh
+  profile's first click tilts the can, shows the callout, and — waiting
+  past the callout's own timeout — a second same-day click pours again but
+  does NOT show the callout a second time.
+
+**5. A mystical quote under the tree name, instructions tucked behind an
+info icon.** Two more small changes to the same tree card, requested right
+after the first four landed:
+- `data/mysticalQuotes.ts` is a new file of 50 short, ORIGINAL one-line
+  aphorisms (`MYSTICAL_QUOTES`) themed around this app's own visual
+  language — hemispheres, the tracking eye, the pyramid, binaural tones,
+  geometry, rhythm — deliberately NOT attributed to any real person (no
+  fabricated quotes from historical figures). `randomMysticalQuote()`
+  picks one; `FocusDashboard.tsx` calls it through a lazy `useState`
+  initializer (`useState(randomMysticalQuote)`), so it's picked once per
+  mount and doesn't flicker on every unrelated re-render. Rendered as
+  `.tree-mystical-quote` directly below the tree's name/growth-percent
+  caption line, per the ask to put it "below the name of the tree."
+- The always-visible explanatory paragraph ("The tree grows as you log
+  time...") is now tucked behind a small round "i" info icon instead of
+  shown by default — a plain native `<details>`/`<summary>`
+  (`.tree-card-info`/`.tree-card-info-icon`), the same zero-JS disclosure
+  pattern the mystery-collection section below it already uses, just
+  styled so the summary reads as a compact circular icon rather than a
+  text link with the default triangle marker
+  (`::-webkit-details-marker { display: none; }`). Verified live via
+  Playwright: the hint text is not visible/rendered-as-hidden until the
+  icon is clicked, and reloading the page several times confirmed the
+  quote actually varies (6 distinct quotes across 7 loads).
+
+All 5 changes verified together: `npx tsc -b`, `npx vitest run` (100/100,
+including 2 new tests), `npm run build`, and a live Playwright pass against
+the built preview covering every change above.
+
 ## Status update — the pyramid tap box, actually fixed this time; a real Y-axis spin per band
 
 The previous session's `:focus-visible` fix for the pyramid's "weird

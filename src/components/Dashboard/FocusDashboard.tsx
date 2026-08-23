@@ -3,12 +3,14 @@ import { BAND_ORDER, BANDS } from '../../data/bands';
 import { ALL_MEDALLIONS_BY_ID, MEDALLIONS } from '../../data/medallions';
 import type { MedallionId } from '../../data/medallions';
 import { MYSTERY_MEDALLIONS, RARITY_LABEL, type MysteryMedallionId } from '../../data/mysteryMedallions';
+import { randomMysticalQuote } from '../../data/mysticalQuotes';
 import type { SecondsByBand, StreakInfo, TreeStageInfo } from '../../engine/growth';
 import { bandMinutes } from '../../engine/growth';
 import { FractalTree } from './FractalTree';
 import { MedallionIcon } from './MedallionIcon';
 import { MysteryFruitGround } from './MysteryFruitGround';
 import { MysteryRollModal } from './MysteryRollModal';
+import { WateringCan } from './WateringCan';
 
 interface FocusDashboardProps {
   totalMinutes: number;
@@ -29,6 +31,9 @@ interface FocusDashboardProps {
   /** Rolls one pending fruit and returns what was won (or null — see
    * useFocusStats.harvestMysteryFruit's own doc comment). */
   onHarvestMysteryFruit: () => MysteryMedallionId | null;
+  /** Waters today's tree; returns whether this click was the day's first
+   * watering (see useFocusStats.waterTree's own doc comment). */
+  onWaterTree: () => boolean;
 }
 
 function formatMinutesLabel(totalMinutes: number): string {
@@ -53,6 +58,7 @@ export function FocusDashboard({
   pendingMysteryCount,
   mysteryOwnedIds,
   onHarvestMysteryFruit,
+  onWaterTree,
 }: FocusDashboardProps) {
   const unlockedSet = new Set(unlockedIds);
   const mysteryOwnedSet = new Set(mysteryOwnedIds);
@@ -67,6 +73,12 @@ export function FocusDashboard({
     const result = onHarvestMysteryFruit();
     if (result) setRollResult(result);
   }
+
+  // Picked once per mount (lazy useState initializer), not on every render
+  // — the quote is flavor text, not something that should visibly flicker
+  // every time an unrelated piece of dashboard state (stats accumulating,
+  // a celebration banner) causes a re-render.
+  const [mysticalQuote] = useState(randomMysticalQuote);
 
   return (
     <section className="focus-dashboard" style={{ '--band-color': bandColor } as React.CSSProperties} aria-label="Focus dashboard">
@@ -99,14 +111,24 @@ export function FocusDashboard({
 
       <div className="focus-dashboard-grid">
         <div className="focus-card tree-card">
-          <FractalTree growth={growth} unlockedIds={unlockedIds} glowColor={bandColor} />
+          <div className="tree-card-stage">
+            <FractalTree growth={growth} unlockedIds={unlockedIds} glowColor={bandColor} />
+            <WateringCan onWater={onWaterTree} />
+          </div>
           <div className="tree-card-caption">
             <span className="tree-stage-label">{treeStage.label}</span>
             <span className="tree-growth-pct">{Math.round(growth * 100)}% grown</span>
           </div>
-          <p className="control-hint">
-            The tree grows as you log time, and bears fruit — one for every medallion you've collected below.
-          </p>
+          <p className="tree-mystical-quote">{mysticalQuote}</p>
+          <details className="tree-card-info">
+            <summary className="tree-card-info-icon" aria-label="About the Focus Garden">
+              i
+            </summary>
+            <p className="control-hint">
+              The tree grows as you log time, and bears fruit — one for every medallion you've collected below. Water it once
+              a day to keep the streak alive — the first watering each day also drops a bonus mystery fruit.
+            </p>
+          </details>
         </div>
 
         <div className="focus-card stats-card">

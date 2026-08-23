@@ -5,10 +5,11 @@ import { MedallionIcon } from './MedallionIcon';
 interface FractalTreeProps {
   /** 0 (seed) .. 1 (fully mature) — see engine/growth.ts's computeGrowth(). */
   growth: number;
-  /** Every currently-unlocked medallion, rendered as fruit hanging at the
-   * tree's outermost branch tips. Order matters only for WHICH tip each
-   * lands on (see pickFruitTips) — it's deterministic, not randomized, so
-   * the tree doesn't visually reshuffle itself between renders. */
+  /** Every currently-unlocked medallion, rendered as fruit hanging at
+   * branch-split points throughout the tree (not just the outermost tips).
+   * Order matters only for WHICH slot each lands on (see pickFruitTips) —
+   * it's deterministic, not randomized, so the tree doesn't visually
+   * reshuffle itself between renders. */
   unlockedIds: MedallionId[];
   glowColor: string;
 }
@@ -30,8 +31,8 @@ function branchColor(depthFraction: number): string {
 }
 
 export function FractalTree({ growth, unlockedIds, glowColor }: FractalTreeProps) {
-  const { branches, tips, maxDepth } = generateFractalTree(growth);
-  const fruitTips = pickFruitTips(tips, unlockedIds.length);
+  const { branches, tips, fruitSlots, maxDepth } = generateFractalTree(growth);
+  const fruitTips = pickFruitTips(fruitSlots, unlockedIds.length);
 
   return (
     <svg

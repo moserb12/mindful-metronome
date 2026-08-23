@@ -32,6 +32,15 @@ export interface PersistedStats {
    * everything else derives from), the outcome has to be the source of
    * truth itself. */
   mysteryUnlockedIds: MysteryMedallionId[];
+  /** Mystery fruit granted by the watering can, outside the normal
+   * time-based growth schedule entirely — one per calendar day, on the
+   * FIRST watering of that day (whether that watering came from the can or
+   * from real practice crossing WATER_THRESHOLD_SEC first; see waterTree()
+   * in useFocusStats.ts). Counted into pendingMysteryFruitCount() alongside
+   * the time-grown total, never decremented directly — harvesting drains it
+   * the same way it drains the time-grown count, by growing
+   * mysteryUnlockedIds.length instead. */
+  wateringBonusFruits: number;
 }
 
 const DATE_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -91,8 +100,20 @@ function sanitizeMysteryUnlockedIds(raw: unknown): MysteryMedallionId[] {
   return result;
 }
 
+/** Same per-entry tolerance as the other numeric fields — a corrupt or
+ * missing value just falls back to 0 rather than voiding anything else. */
+function sanitizeWateringBonusFruits(raw: unknown): number {
+  return isNonNegativeFiniteNumber(raw) ? raw : 0;
+}
+
 function emptyStats(): PersistedStats {
-  return { totalSecondsByBand: emptySecondsByBand(), dailySeconds: {}, selectedMedallionId: DEFAULT_MEDALLION_ID, mysteryUnlockedIds: [] };
+  return {
+    totalSecondsByBand: emptySecondsByBand(),
+    dailySeconds: {},
+    selectedMedallionId: DEFAULT_MEDALLION_ID,
+    mysteryUnlockedIds: [],
+    wateringBonusFruits: 0,
+  };
 }
 
 /** Reads whatever validates from localStorage. Never throws — see
@@ -112,6 +133,7 @@ export function loadStats(): PersistedStats {
       dailySeconds: sanitizeDailySeconds(source.dailySeconds),
       selectedMedallionId: sanitizeSelectedMedallionId(source.selectedMedallionId),
       mysteryUnlockedIds: sanitizeMysteryUnlockedIds(source.mysteryUnlockedIds),
+      wateringBonusFruits: sanitizeWateringBonusFruits(source.wateringBonusFruits),
     };
   } catch {
     return emptyStats();

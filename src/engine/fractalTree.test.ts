@@ -40,6 +40,18 @@ describe('generateFractalTree', () => {
       expect(b.y1).toBeLessThanOrEqual(TREE_VIEW + 10);
     }
   });
+
+  it('fruitSlots covers every branch endpoint — interior splits AND tips, not just tips', () => {
+    const tree = generateFractalTree(1);
+    // One fruit slot per branch (each branch's own x2,y2 endpoint).
+    expect(tree.fruitSlots.length).toBe(tree.branches.length);
+    // Every tip is also a fruit slot, but fruitSlots is a strict superset
+    // once the tree has any interior (non-leaf) branches at all.
+    expect(tree.fruitSlots.length).toBeGreaterThan(tree.tips.length);
+    for (const tip of tree.tips) {
+      expect(tree.fruitSlots.some((s) => s.x === tip.x && s.y === tip.y)).toBe(true);
+    }
+  });
 });
 
 describe('pickFruitTips', () => {

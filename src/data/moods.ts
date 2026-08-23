@@ -59,7 +59,14 @@ export interface MoodProfile {
   tapSpinTurns: number;
   /** Duration of that spin, in seconds — also how long the tap-response
    * state stays "active" (see handlePyramidTap in MetronomeVisual.tsx),
-   * so the CSS class clears exactly when the animation actually ends. */
+   * so the CSS class clears exactly when the animation actually ends.
+   * Includes a brief wind-up (the first ~14% of this duration pulls the
+   * pyramid backward before the main spin releases forward — see the
+   * pyramid-spin keyframes in index.css), so this number sizes both the
+   * anticipation and the release, not just the release. Bumped up across
+   * every band from the first pass, more so for the higher-turn-count
+   * bands, per direct feedback that the multi-turn spins read as too
+   * fast to feel like something with real weight winding up. */
   tapSpinDurationSec: number;
   /** Which of the app's two shared eases (:root's --ease-soft/
    * --ease-harmonic) the spin settles with — 'soft' for a plain
@@ -81,7 +88,7 @@ export const MOOD_BY_BAND: Record<BrainwaveBand, MoodProfile> = {
     wiggleMul: 0.5,
     maxFocusSec: 26,
     tapSpinTurns: 1,
-    tapSpinDurationSec: 1.3,
+    tapSpinDurationSec: 1.45,
     tapSpinEase: 'soft',
   },
   // chill / dreamy — drifts off eventually; a slow-ish double turn.
@@ -94,7 +101,7 @@ export const MOOD_BY_BAND: Record<BrainwaveBand, MoodProfile> = {
     wiggleMul: 0.75,
     maxFocusSec: 20,
     tapSpinTurns: 2,
-    tapSpinDurationSec: 1.15,
+    tapSpinDurationSec: 1.5,
     tapSpinEase: 'soft',
   },
   // peaceful — today's exact baseline for every OTHER field; a clean,
@@ -109,7 +116,7 @@ export const MOOD_BY_BAND: Record<BrainwaveBand, MoodProfile> = {
     wiggleMul: 1.0,
     maxFocusSec: 15,
     tapSpinTurns: 2,
-    tapSpinDurationSec: 0.95,
+    tapSpinDurationSec: 1.25,
     tapSpinEase: 'harmonic',
   },
   // happy / upbeat — a little antsy; a snappier triple turn.
@@ -122,7 +129,7 @@ export const MOOD_BY_BAND: Record<BrainwaveBand, MoodProfile> = {
     wiggleMul: 1.3,
     maxFocusSec: 10,
     tapSpinTurns: 3,
-    tapSpinDurationSec: 0.75,
+    tapSpinDurationSec: 1.05,
     tapSpinEase: 'harmonic',
   },
   // energized — can't sit still, least patient; a fast four-turn flurry.
@@ -135,7 +142,7 @@ export const MOOD_BY_BAND: Record<BrainwaveBand, MoodProfile> = {
     wiggleMul: 1.6,
     maxFocusSec: 6,
     tapSpinTurns: 4,
-    tapSpinDurationSec: 0.6,
+    tapSpinDurationSec: 0.95,
     tapSpinEase: 'harmonic',
   },
 };

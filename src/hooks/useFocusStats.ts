@@ -10,6 +10,7 @@ import {
   dateKeyFor,
   isMedallionUnlocked,
   totalMinutesAllBands,
+  WATER_THRESHOLD_SEC,
   type FocusStats,
 } from '../engine/growth';
 import { pendingMysteryFruitCount, rollMysteryMedallion } from '../engine/mysteryFruits';
@@ -130,7 +131,7 @@ export function useFocusStats(isPlaying: boolean, band: BrainwaveBand) {
   const totalMinutes = totalMinutesAllBands(stats.totalSecondsByBand);
   const growth = computeGrowth(totalMinutes);
   const treeStage = currentTreeStage(totalMinutes);
-  const pendingMysteryCount = pendingMysteryFruitCount(totalMinutes, stats.mysteryUnlockedIds.length);
+  const pendingMysteryCount = pendingMysteryFruitCount(totalMinutes, stats.mysteryUnlockedIds.length, stats.wateringBonusFruits);
 
   // Celebrate newly-unlocked medallions: diff this render's unlocked set
   // against the previous one and surface whatever's new for a few seconds,
@@ -205,12 +206,52 @@ export function useFocusStats(isPlaying: boolean, band: BrainwaveBand) {
   const harvestMysteryFruit = useCallback((): MysteryMedallionId | null => {
     const current = statsRef.current;
     const totalMinutesNow = totalMinutesAllBands(current.totalSecondsByBand);
-    const pendingNow = pendingMysteryFruitCount(totalMinutesNow, current.mysteryUnlockedIds.length);
+    const pendingNow = pendingMysteryFruitCount(totalMinutesNow, current.mysteryUnlockedIds.length, current.wateringBonusFruits);
     if (pendingNow <= 0) return null;
     const rolled = rollMysteryMedallion(new Set(current.mysteryUnlockedIds));
     if (!rolled) return null;
     setStats((latest) => (latest.mysteryUnlockedIds.includes(rolled) ? latest : { ...latest, mysteryUnlockedIds: [...latest.mysteryUnlockedIds, rolled] }));
     return rolled;
+  }, []);
+
+  /** Waters the tree for today — marks today's dailySeconds at or above
+   * WATER_THRESHOLD_SEC, the exact same threshold real practice uses, so
+   * `wateredToday`/the streak treat a can-click identically to a genuine
+   * session. Deliberately does NOT touch totalSecondsByBand: that field
+   * drives tree growth and mystery-fruit timing, and both need to stay an
+   * honest reflection of real practice, not something a click can inflate.
+   *
+   * If today wasn't already watered by ANY means (real practice or an
+   * earlier click today), this is the day's first watering — it also
+   * grants one bonus mystery fruit (wateringBonusFruits), independent of
+   * the normal time-based growth schedule. Returns whether THIS call was
+   * that first watering, so the caller can react immediately (e.g. play a
+   * "fruit fell" flourish) without waiting on a re-render.
+   *
+   * The "was it already watered" read happens outside the setStats
+   * updater (same reasoning as harvestMysteryFruit's pendingNow check —
+   * an updater can run more than once under StrictMode, so anything that
+   * shouldn't happen twice needs to be decided once, synchronously, from
+   * statsRef.current). The updater itself re-derives the same check from
+   * `latest` before incrementing, so it stays idempotent no matter how
+   * many times React invokes it. */
+  const waterTree = useCallback((): boolean => {
+    const current = statsRef.current;
+    const todayKey = dateKeyFor(new Date());
+    const wasWateredToday = (current.dailySeconds[todayKey] ?? 0) >= WATER_THRESHOLD_SEC;
+    setStats((latest) => {
+      const latestTodayKey = dateKeyFor(new Date());
+      const latestWasWatered = (latest.dailySeconds[latestTodayKey] ?? 0) >= WATER_THRESHOLD_SEC;
+      return {
+        ...latest,
+        dailySeconds: {
+          ...latest.dailySeconds,
+          [latestTodayKey]: Math.max(latest.dailySeconds[latestTodayKey] ?? 0, WATER_THRESHOLD_SEC),
+        },
+        wateringBonusFruits: latestWasWatered ? latest.wateringBonusFruits : latest.wateringBonusFruits + 1,
+      };
+    });
+    return !wasWateredToday;
   }, []);
 
   return {
@@ -227,5 +268,6 @@ export function useFocusStats(isPlaying: boolean, band: BrainwaveBand) {
     mysteryOwnedIds: stats.mysteryUnlockedIds,
     pendingMysteryCount,
     harvestMysteryFruit,
+    waterTree,
   };
 }

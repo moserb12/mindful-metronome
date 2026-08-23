@@ -191,6 +191,7 @@ export default function App() {
           pendingMysteryCount={focusStats.pendingMysteryCount}
           mysteryOwnedIds={focusStats.mysteryOwnedIds}
           onHarvestMysteryFruit={focusStats.harvestMysteryFruit}
+          onWaterTree={focusStats.waterTree}
         />
       )}
 
