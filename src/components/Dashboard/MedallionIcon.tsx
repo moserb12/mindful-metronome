@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import { ALL_MEDALLIONS_BY_ID, type MedallionId } from '../../data/medallions';
 import { MYSTERY_MEDALLIONS_BY_ID, type MysteryGlyphSpec, type MysteryMedallionId } from '../../data/mysteryMedallions';
 
@@ -263,6 +264,8 @@ function MysteryGlyph({ spec, color }: { spec: MysteryGlyphSpec; color: string }
         </>
       );
     }
+    case 'physics':
+      return <DoublePendulumGlyph color={color} />;
     case 'eye':
     default: {
       const lashCount = n ?? 6;
@@ -283,6 +286,175 @@ function MysteryGlyph({ spec, color }: { spec: MysteryGlyphSpec; color: string }
     }
   }
 }
+
+/** Fixed pivot + rod lengths for the double-pendulum glyph, in the same
+ * shared 0..100 local space every other glyph uses. Pivot sits above local
+ * center (50,50) so the pendulum hangs mostly downward, like the real one
+ * this app is built around. Worst-case reach from the pivot is
+ * PENDULUM_L1 + PENDULUM_L2 = 26, so the furthest the bobs can ever get
+ * from local center (50,50) is PENDULUM_PIVOT_OFFSET_Y + 26 = 34 — inside
+ * the ~36-39-unit envelope the largest other glyphs already use, so this
+ * clears the badge circle (r=47) and the pendant's clipping margin with
+ * room to spare (see PENDANT_GLYPH_SCALE's doc comment in
+ * MetronomeVisual.tsx) at any point in its motion. */
+const PENDULUM_PIVOT_OFFSET_Y = 8;
+const PENDULUM_PIVOT = { x: 50, y: 50 - PENDULUM_PIVOT_OFFSET_Y };
+const PENDULUM_L1 = 14;
+const PENDULUM_L2 = 12;
+/** Tuned by feel, not physically calibrated — chosen so the natural
+ * oscillation period (~sqrt(l/g)) lands around a second or so at this
+ * glyph's rod lengths: fast enough to visibly read as "moving" even at a
+ * small icon size, slow enough not to look like frantic jitter. */
+const PENDULUM_G = 320;
+/** Sub-steps per animation frame — a plain double pendulum's equations of
+ * motion are stiff enough that a single large Euler step per frame (at
+ * ~16ms) visibly drifts/destabilizes; a handful of smaller sub-steps
+ * keeps the same simple integrator stable without needing anything
+ * fancier (RK4, adaptive step size) for what's ultimately a decorative
+ * glyph, not a physics engine. */
+const PENDULUM_SUBSTEPS = 6;
+
+interface PendulumState {
+  a1: number;
+  a2: number;
+  w1: number;
+  w2: number;
+}
+
+/**
+ * One semi-implicit-Euler step of the classic equal-point-mass double
+ * pendulum equations of motion (angles measured from straight down,
+ * standard formulation — see e.g. the "Double pendulum" derivation on
+ * Wikipedia). Mutates `s` in place; called several times per animation
+ * frame with a small `dt` (see PENDULUM_SUBSTEPS) rather than once with
+ * the full frame time, for stability.
+ */
+function integrateDoublePendulum(s: PendulumState, dt: number): void {
+  const g = PENDULUM_G;
+  const l1 = PENDULUM_L1;
+  const l2 = PENDULUM_L2;
+  const delta = s.a1 - s.a2;
+  const den = 3 - Math.cos(2 * delta); // 2*m1+m2-m2*cos(2*delta) with m1=m2=1 (2*1+1=3)
+
+  const num1 =
+    -3 * g * Math.sin(s.a1) - g * Math.sin(s.a1 - 2 * s.a2) - 2 * Math.sin(delta) * (s.w2 * s.w2 * l2 + s.w1 * s.w1 * l1 * Math.cos(delta));
+  const alpha1 = num1 / (l1 * den);
+
+  const num2 = 2 * Math.sin(delta) * (2 * s.w1 * s.w1 * l1 + 2 * g * Math.cos(s.a1) + s.w2 * s.w2 * l2 * Math.cos(delta));
+  const alpha2 = num2 / (l2 * den);
+
+  s.w1 += alpha1 * dt;
+  s.w2 += alpha2 * dt;
+  s.a1 += s.w1 * dt;
+  s.a2 += s.w2 * dt;
+}
+
+/**
+ * The one mystery glyph that's genuinely simulated rather than a static
+ * (or CSS-looped) shape — a real double pendulum, angles measured from
+ * straight DOWN so it hangs and swings the same way the app's own main
+ * pendulum does. Reads and writes SVG attributes directly via refs every
+ * animation frame instead of React state, the same "bypass re-renders for
+ * high-frequency updates" technique MetronomeVisual.tsx's own pendulum
+ * already uses for its pupil-tracking and timer ring.
+ *
+ * Each mounted instance runs its own independent rAF loop and starts from
+ * a slightly off-vertical, asymmetric pose (never hangs motionless at a
+ * symmetric equilibrium) — chaotic from frame one, and since two
+ * instances essentially never start from the exact same floating-point
+ * angle, no two renders of this glyph trace the same path anyway.
+ */
+function DoublePendulumGlyph({ color }: { color: string }) {
+  const rod1Ref = useRef<SVGLineElement | null>(null);
+  const rod2Ref = useRef<SVGLineElement | null>(null);
+  const bob1Ref = useRef<SVGCircleElement | null>(null);
+  const bob2Ref = useRef<SVGCircleElement | null>(null);
+  const stateRef = useRef<PendulumState>({ a1: Math.PI / 2 + 0.4, a2: Math.PI / 2 - 0.15, w1: 0, w2: 0 });
+
+  useEffect(() => {
+    const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    if (reduceMotion) return; // Freeze at the initial pose — no motion to opt out of.
+
+    let raf = 0;
+    let lastTime: number | null = null;
+
+    function frame(now: number) {
+      raf = requestAnimationFrame(frame);
+      if (lastTime === null) {
+        lastTime = now;
+        return;
+      }
+      const dtSec = Math.min(0.05, (now - lastTime) / 1000);
+      lastTime = now;
+      const s = stateRef.current;
+      const dtStep = dtSec / PENDULUM_SUBSTEPS;
+      for (let i = 0; i < PENDULUM_SUBSTEPS; i++) integrateDoublePendulum(s, dtStep);
+
+      const x1 = PENDULUM_PIVOT.x + PENDULUM_L1 * Math.sin(s.a1);
+      const y1 = PENDULUM_PIVOT.y + PENDULUM_L1 * Math.cos(s.a1);
+      const x2 = x1 + PENDULUM_L2 * Math.sin(s.a2);
+      const y2 = y1 + PENDULUM_L2 * Math.cos(s.a2);
+
+      rod1Ref.current?.setAttribute('x2', String(x1));
+      rod1Ref.current?.setAttribute('y2', String(y1));
+      rod2Ref.current?.setAttribute('x1', String(x1));
+      rod2Ref.current?.setAttribute('y1', String(y1));
+      rod2Ref.current?.setAttribute('x2', String(x2));
+      rod2Ref.current?.setAttribute('y2', String(y2));
+      bob1Ref.current?.setAttribute('cx', String(x1));
+      bob1Ref.current?.setAttribute('cy', String(y1));
+      bob2Ref.current?.setAttribute('cx', String(x2));
+      bob2Ref.current?.setAttribute('cy', String(y2));
+    }
+
+    raf = requestAnimationFrame(frame);
+    return () => cancelAnimationFrame(raf);
+  }, []);
+
+  return (
+    <>
+      <circle cx={PENDULUM_PIVOT.x} cy={PENDULUM_PIVOT.y} r={2} fill={color} opacity={0.6} />
+      <line
+        ref={rod1Ref}
+        x1={PENDULUM_PIVOT.x}
+        y1={PENDULUM_PIVOT.y}
+        x2={PENDULUM_PIVOT.x}
+        y2={PENDULUM_PIVOT.y + PENDULUM_L1}
+        stroke={color}
+        strokeWidth={2.5}
+        strokeLinecap="round"
+      />
+      <line
+        ref={rod2Ref}
+        x1={PENDULUM_PIVOT.x}
+        y1={PENDULUM_PIVOT.y + PENDULUM_L1}
+        x2={PENDULUM_PIVOT.x}
+        y2={PENDULUM_PIVOT.y + PENDULUM_L1 + PENDULUM_L2}
+        stroke={color}
+        strokeWidth={2.5}
+        strokeLinecap="round"
+      />
+      <circle ref={bob1Ref} cx={PENDULUM_PIVOT.x} cy={PENDULUM_PIVOT.y + PENDULUM_L1} r={4} fill={color} />
+      <circle ref={bob2Ref} cx={PENDULUM_PIVOT.x} cy={PENDULUM_PIVOT.y + PENDULUM_L1 + PENDULUM_L2} r={5} fill={color} />
+    </>
+  );
+}
+
+/** A small handful of the rarer mystery medallions get simple, purely
+ * CSS-driven movement — a slow spin, a gentle sway, an occasional blink —
+ * picked to loosely echo each one's own shape (a coil slowly turning, an
+ * eye blinking) rather than one generic effect applied everywhere. Kept to
+ * a deliberate few, and only the rarer tiers, so movement itself reads as
+ * part of what makes a pull special rather than background noise across
+ * all 51 icons. See the matching classes in index.css, all guarded by
+ * prefers-reduced-motion like every other animation in this app. */
+const MYSTERY_ANIMATION_CLASS: Partial<Record<MysteryMedallionId, string>> = {
+  'mystery-deep-coil': 'mystery-anim-spin',
+  'mystery-far-halo': 'mystery-anim-spin-reverse',
+  'mystery-long-tail-comet': 'mystery-anim-drift',
+  'mystery-solstice-bloom': 'mystery-anim-sway',
+  'mystery-third-eye': 'mystery-anim-blink',
+};
 
 const LOCKED_COLOR = '#5b6472';
 
@@ -347,7 +519,9 @@ function SnowflakeArm({ deg, color }: { deg: number; color: string }) {
 export function MedallionGlyph({ id, color }: { id: MedallionId; color: string }) {
   if (id.startsWith('mystery-')) {
     const def = MYSTERY_MEDALLIONS_BY_ID[id as MysteryMedallionId];
-    return <MysteryGlyph spec={def.glyph} color={color} />;
+    const glyph = <MysteryGlyph spec={def.glyph} color={color} />;
+    const animClass = MYSTERY_ANIMATION_CLASS[id as MysteryMedallionId];
+    return animClass ? <g className={animClass}>{glyph}</g> : glyph;
   }
 
   if (id.endsWith('-orb')) {

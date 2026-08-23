@@ -1,7 +1,7 @@
 // ============================================================================
 // Mystery medallions — a second, separate collectible track from
 // data/medallions.ts's goal-driven ones. Those 15 unlock by a specific,
-// visible rule ("log 30 minutes," "streak 7 days"); these 50 unlock only by
+// visible rule ("log 30 minutes," "streak 7 days"); these 51 unlock only by
 // harvesting a "mystery fruit" that drops onto the Focus Garden's ground as
 // you practice (see engine/mysteryFruits.ts for the drop-timing and the
 // weighted-roll logic, MysteryFruitGround.tsx/MysteryRollModal.tsx for the
@@ -41,14 +41,14 @@ export const RARITY_COLOR: Record<MysteryRarity, string> = {
 /** Per-item roll weight — deliberately NOT a per-tier total (a tier with
  * more items would otherwise silently dominate the odds just by having more
  * entries). Every common item shares this exact weight, every legendary
- * item shares that lower one, etc., so the tier counts below (18/14/10/6/2)
+ * item shares that lower one, etc., so the tier counts below (18/14/10/6/3)
  * can be tuned without accidentally reshaping the odds curve.
  *
- * With 18/14/10/6/2 items per tier, the odds of pulling ANY item from a
+ * With 18/14/10/6/3 items per tier, the odds of pulling ANY item from a
  * given tier (before the no-duplicate exclusion in rollMysteryMedallion())
  * work out to roughly: common 64%, uncommon 25%, rare 9%, epic 2%,
- * legendary 0.3% — a fairly standard-feeling gacha curve, tightest at the
- * top on purpose so the two legendary pulls stay genuinely special. */
+ * legendary 0.4% — a fairly standard-feeling gacha curve, tightest at the
+ * top on purpose so the three legendary pulls stay genuinely special. */
 export const RARITY_WEIGHT: Record<MysteryRarity, number> = {
   common: 10,
   uncommon: 5,
@@ -58,7 +58,7 @@ export const RARITY_WEIGHT: Record<MysteryRarity, number> = {
 };
 
 /** Flavor line shown on the roll reveal and the (locked) collection grid
- * tile. Shared per-tier rather than 50 individually-written lines — with 50
+ * tile. Shared per-tier rather than 51 individually-written lines — with 51
  * items the real distinctiveness is each one's own name/color/shape; the
  * blurb's job is just to communicate "how rare was this," consistently. */
 export const RARITY_BLURB: Record<MysteryRarity, string> = {
@@ -79,14 +79,22 @@ export type MysteryShapeFamily =
   | 'shard'
   | 'comet'
   | 'lattice'
-  | 'eye';
+  | 'eye'
+  /** The one family that ISN'T a static parametric shape — DoublePendulumGlyph
+   * in MedallionIcon.tsx runs a real, live double-pendulum physics
+   * simulation instead of reading n/n2/rotation at all. Reserved for the
+   * single "Double Pendulum" legendary — thematically fitting since the
+   * whole app's own visual is a pendulum, so this glyph is a tiny, chaotic
+   * mirror of the real thing swinging above it. */
+  | 'physics';
 
 /** Every family's renderer (MysteryGlyph in MedallionIcon.tsx) is driven by
  * up to three plain numeric/rotation knobs rather than fully bespoke path
  * data per item — the same "shared generator, varied parameters" approach
  * spiralPathD/starPath/SnowflakeArm already use elsewhere in this app, just
- * pushed further so 50 genuinely distinct-looking glyphs stay real code
- * instead of 50 hand-authored path strings. */
+ * pushed further so 51 genuinely distinct-looking glyphs stay real code
+ * instead of 51 hand-authored path strings. (The 'physics' family is the
+ * one exception — see MysteryShapeFamily's own comment.) */
 export interface MysteryGlyphSpec {
   family: MysteryShapeFamily;
   /** Primary count knob: petal/side/ring/shard/curve/tail-dot count. */
@@ -109,13 +117,17 @@ export interface MysteryMedallionDef {
 }
 
 /**
- * 50 entries, 10 shape families x 5 each except "eye" (2, reserved for the
- * two legendary items — the almond/pupil shape doubles as a nod to this
- * app's own eye motif, so the rarest pulls get the most thematically
- * "ours" shape). Rarity counts: 18 common / 14 uncommon / 10 rare / 6 epic
- * / 2 legendary = 50, chosen to loosely track shape complexity (more
+ * 51 entries: 10 shape families x 5 each except "eye" (2) and "physics"
+ * (1, the live-simulated double pendulum — see MysteryShapeFamily's own
+ * comment). Rarity counts: 18 common / 14 uncommon / 10 rare / 6 epic / 3
+ * legendary = 51, chosen to loosely track shape complexity (more
  * petals/facets/layers skew toward the rarer end of each family) without
  * being a strict rule.
+ *
+ * A small handful of the rarer items also carry simple movement — see
+ * MYSTERY_ANIMATION_CLASS in MedallionIcon.tsx for the CSS-driven ones
+ * (a slow spin, a sway, a blink) and DoublePendulumGlyph for the one
+ * that's genuinely simulated, not just looped.
  */
 export const MYSTERY_MEDALLIONS: MysteryMedallionDef[] = [
   // bloom — flower/petal loop
@@ -187,6 +199,9 @@ export const MYSTERY_MEDALLIONS: MysteryMedallionDef[] = [
   // eye — legendary only
   { id: 'mystery-third-eye', name: 'The Third Eye', rarity: 'legendary', color: '#c4b5fd', glyph: { family: 'eye', n: 6 } },
   { id: 'mystery-singularity', name: 'Singularity', rarity: 'legendary', color: '#fde68a', glyph: { family: 'eye', n: 10, n2: 1 } },
+
+  // physics — the one glyph that's actually simulated, not drawn
+  { id: 'mystery-double-pendulum', name: 'Double Pendulum', rarity: 'legendary', color: '#f8fafc', glyph: { family: 'physics' } },
 ];
 
 export const MYSTERY_MEDALLIONS_BY_ID: Record<MysteryMedallionId, MysteryMedallionDef> = Object.fromEntries(

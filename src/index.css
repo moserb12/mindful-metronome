@@ -1922,6 +1922,78 @@ details[open] > .control-group-summary .control-group-chevron,
   margin-top: 8px;
 }
 
+/* A handful of the rarer mystery glyphs get simple, purely CSS-driven
+   movement (the double pendulum's is real physics instead — see
+   DoublePendulumGlyph in MedallionIcon.tsx, which animates via direct SVG
+   attribute writes each frame, not CSS). Each class is applied to its own
+   wrapping <g> with no positioning transform ATTRIBUTE of its own — see
+   the Pendant off-center bug write-up earlier in this file's history for
+   why that split matters whenever transform-origin/animation and an
+   attribute transform could otherwise land on the same element. */
+.mystery-anim-spin,
+.mystery-anim-spin-reverse {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.mystery-anim-spin {
+  animation: mystery-spin 9s linear infinite;
+}
+.mystery-anim-spin-reverse {
+  animation: mystery-spin-reverse 11s linear infinite;
+}
+@keyframes mystery-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes mystery-spin-reverse {
+  to {
+    transform: rotate(-360deg);
+  }
+}
+.mystery-anim-sway {
+  transform-box: fill-box;
+  transform-origin: 50% 15%;
+  animation: mystery-sway 3.4s var(--ease-soft) infinite;
+}
+@keyframes mystery-sway {
+  0%,
+  100% {
+    transform: rotate(-6deg);
+  }
+  50% {
+    transform: rotate(6deg);
+  }
+}
+.mystery-anim-drift {
+  transform-box: fill-box;
+  animation: mystery-drift 2.6s var(--ease-soft) infinite;
+}
+@keyframes mystery-drift {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  50% {
+    transform: translateX(3px);
+  }
+}
+.mystery-anim-blink {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: mystery-blink 4.4s ease-in-out infinite;
+}
+@keyframes mystery-blink {
+  0%,
+  92%,
+  100% {
+    transform: scaleY(1);
+  }
+  96% {
+    transform: scaleY(0.15);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .mystery-fruit-ball {
     animation: none;
@@ -1931,6 +2003,13 @@ details[open] > .control-group-summary .control-group-chevron,
     animation: none;
   }
   .mystery-reveal-glow {
+    animation: none;
+  }
+  .mystery-anim-spin,
+  .mystery-anim-spin-reverse,
+  .mystery-anim-sway,
+  .mystery-anim-drift,
+  .mystery-anim-blink {
     animation: none;
   }
 }

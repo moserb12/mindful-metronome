@@ -3,6 +3,58 @@
 This file is read automatically by Claude Code at the start of every session
 in this repo. Keep it up to date as decisions get made.
 
+## Status update — mystery medallion #51: a genuinely simulated double pendulum, plus a few simple animated glyphs
+
+Two follow-ups to the mystery-fruit system, per the builder's ask: "animate
+a few of the rarer medallions... including a double pendulum medallion that
+actually behaves like one."
+
+**"Double Pendulum" is a new 51st mystery medallion** (legendary, bringing
+that tier from 2 to 3 — `data/mysteryMedallions.ts`), and its glyph
+(`DoublePendulumGlyph` in `MedallionIcon.tsx`) is the one exception to
+"every glyph is a static parametric shape": it runs a REAL double-pendulum
+physics simulation (the classic equal-point-mass equations of motion,
+semi-implicit Euler with a few sub-steps per frame for stability — not a
+scientifically rigorous integrator, but a genuinely chaotic one, not a
+canned loop). New `'physics'` entry on `MysteryShapeFamily`, since this
+one glyph doesn't read `n`/`n2`/`rotation` at all. It reads/writes SVG
+attributes directly via refs every animation frame instead of React
+state — the same technique `MetronomeVisual.tsx`'s own pupil-tracking and
+timer ring already use for exactly the same reason (avoiding a re-render
+on every one of 60 frames/sec). Each mounted instance runs its own
+independent rAF loop from a slightly asymmetric starting pose, and the
+`prefers-reduced-motion` check freezes it at that pose rather than
+skipping to a static end state (there's no meaningful "settled" pose for
+a chaotic system to freeze on). Pivot/rod lengths were sized so the
+worst-case reach from local center stays inside the same ~34-39-unit
+envelope every other glyph's largest reach already uses — verified this
+still clears the badge circle/pendant clipping margins.
+
+**Five existing rarer mystery medallions got simple, purely CSS-driven
+movement** — deliberately NOT physics, just a loop, since the ask
+distinguished "super simple straightforward movement" for these from
+"actually behaves like one" for the pendulum specifically:
+`MYSTERY_ANIMATION_CLASS` in `MedallionIcon.tsx` maps a handful of ids
+(Deep Coil → slow spin, Far Halo → reverse spin, Long-Tail Comet → a
+drift wiggle, Solstice Bloom → a sway, The Third Eye → a blink) to CSS
+classes in `index.css`. Each wraps the glyph in its own NEW `<g
+className="...">` with no positioning transform ATTRIBUTE of its
+own — same split that fixed the pendant off-center bug earlier in this
+file's history, applied proactively here since the failure mode (an
+attribute-transform and a CSS transform-origin/animation landing on the
+SAME element) is exactly the kind of thing worth guarding against by
+construction rather than rediscovering. Deliberately kept to a few
+higher-rarity items, not all 51 — movement itself is meant to read as
+part of what makes a pull special, not become background noise across
+the whole collection grid. All guarded by `prefers-reduced-motion`, same
+as everything else in this app.
+
+`MYSTERY_MEDALLIONS.length` is now 51, not 50 — every place that counted
+it does so dynamically (`.length`), so nothing besides prose/comments
+needed updating; `RARITY_WEIGHT`'s own doc comment has the refreshed odds
+(legendary ~0.4%, up slightly from ~0.3%, now split three ways instead of
+two).
+
 ## Status update — mystery fruit: a second, RNG-driven medallion track
 
 A genuinely new system, at the builder's explicit request: alongside the 15
