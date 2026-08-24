@@ -1851,20 +1851,29 @@ details[open] > .control-group-summary .control-group-chevron,
      percentage-based positioning properties does. */
 }
 .watering-can-wrap.pouring {
-  animation: watering-can-travel 1.1s var(--ease-harmonic) 1;
+  animation: watering-can-travel 3s var(--ease-soft) 1;
 }
-/* Travels from its resting spot up and over the tree's canopy, holds
-   there through the tilt + droplets below, then returns — so watering
-   the tree reads as the can passing over the branches, not just tilting
-   in place beside them. */
+/* Travels from its resting spot up above the tree, then SWEEPS across the
+   whole canopy left-to-right while pouring (15%-78% — a long, slow sweep
+   rather than a quick tilt-in-place, per the ask for a proper watering
+   motion), then returns. "right" is a distance from the container's own
+   right edge, so a LARGER value sits further left on screen — sweeping
+   right:58%→20% is what actually reads as left-to-right. --ease-soft (a
+   plain decelerate, no spring/overshoot) on the whole animation, same
+   choice as the tilt below, for a calmer, more natural arc than this
+   app's usual --ease-harmonic bounce, which would read as too playful for
+   something like pouring water. */
 @keyframes watering-can-travel {
   0% {
     right: 8%;
     bottom: 2%;
   }
-  32%,
-  68% {
-    right: 40%;
+  15% {
+    right: 58%;
+    bottom: 56%;
+  }
+  78% {
+    right: 20%;
     bottom: 56%;
   }
   100% {
@@ -1909,62 +1918,111 @@ details[open] > .control-group-summary .control-group-chevron,
 
 /* One-shot pour flourish on click — same toggled-class-plus-timeout shape
    as .pyramid-group.pyramid-spin/.eye-outer.eye-wink elsewhere in this
-   app. The whole can travels over the tree first (watering-can-travel,
-   above), THEN tilts once it arrives, and three droplets fall from the
-   spout tip while it's tilted and positioned over the canopy — so the
-   pour visibly lands on the tree, not on empty space beside it. Timed
-   against the same 1.1s total duration as the travel: the travel's hold
-   window is 32%-68%, so the tilt ramps up just before that (28%) and
-   holds through it, and the droplets fall squarely inside it. A direct
-   response to a user's own tap, so — same reasoning as those other
-   flourishes — intentionally not disabled under prefers-reduced-motion. */
+   app. The whole can travels + sweeps over the tree first
+   (watering-can-travel, above), THEN tilts once it arrives, and a run of
+   droplets falls from the spout tip while it's tilted and sweeping across
+   the canopy — so the pour visibly lands on the tree, not on empty space
+   beside it. Timed against the same 3s total duration as the travel: the
+   sweep window is 15%-78%, so the tilt ramps up just before that (10%)
+   and holds through it, and every droplet fires squarely inside it. The
+   pivot (transform-origin) sits near the SPOUT side (25%,55% — the body
+   was mirrored so the spout is now on the left) rather than the handle
+   side: rotating around a point near the spout is what makes the spout
+   tip dip DOWNWARD as the can tilts, the same way a real pour works —
+   pivoting around the handle side instead would swing the spout upward,
+   which reads as the opposite of pouring. A direct response to a user's
+   own tap, so — same reasoning as those other flourishes — intentionally
+   not disabled under prefers-reduced-motion. */
 .watering-can-tilt-group {
   transform-box: fill-box;
-  transform-origin: 75% 55%;
+  transform-origin: 25% 55%;
 }
 .watering-can-wrap.pouring .watering-can-tilt-group {
-  animation: watering-can-tilt 1.1s var(--ease-harmonic) 1;
+  animation: watering-can-tilt 3s var(--ease-soft) 1;
 }
 @keyframes watering-can-tilt {
   0%,
-  22% {
+  8% {
     transform: rotate(0deg);
   }
-  40% {
-    transform: rotate(-32deg);
+  18% {
+    transform: rotate(-34deg);
   }
-  62% {
-    transform: rotate(-32deg);
+  80% {
+    transform: rotate(-34deg);
   }
-  82%,
+  92%,
   100% {
     transform: rotate(0deg);
+  }
+}
+/* A thin continuous trickle at the spout tip, alongside the individual
+   droplets — visible only through the same hold window the tilt/sweep
+   occupy, so it reads as one continuous pour rather than isolated drips. */
+.watering-can-stream {
+  stroke: var(--band-color, #7dd3fc);
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  fill: none;
+  opacity: 0;
+}
+.watering-can-wrap.pouring .watering-can-stream {
+  animation: watering-can-stream-fade 3s ease-in-out 1;
+}
+@keyframes watering-can-stream-fade {
+  0%,
+  16% {
+    opacity: 0;
+  }
+  24%,
+  76% {
+    opacity: 0.85;
+  }
+  88%,
+  100% {
+    opacity: 0;
   }
 }
 .watering-can-droplet {
   fill: var(--band-color, #7dd3fc);
   opacity: 0;
 }
+/* Six droplets, staggered across the whole 15%-78% sweep window (≈600ms to
+   ≈2340ms of the 3s total) rather than clustered right after the tilt —
+   combined with the can's own left-to-right travel, each one lands at a
+   different point across the canopy instead of all in one spot. Each
+   falls much further than the can's own small icon (34px) is tall —
+   .watering-can-svg is overflow:visible, so they genuinely travel down
+   toward the tree below rather than stopping at the icon's own edge. */
 .watering-can-wrap.pouring .watering-can-droplet-1 {
-  animation: watering-can-drop 0.5s ease-in 0.5s 1;
+  animation: watering-can-drop 0.7s ease-in 0.65s 1;
 }
 .watering-can-wrap.pouring .watering-can-droplet-2 {
-  animation: watering-can-drop 0.5s ease-in 0.6s 1;
+  animation: watering-can-drop 0.72s ease-in 0.94s 1;
 }
 .watering-can-wrap.pouring .watering-can-droplet-3 {
-  animation: watering-can-drop 0.5s ease-in 0.68s 1;
+  animation: watering-can-drop 0.68s ease-in 1.23s 1;
+}
+.watering-can-wrap.pouring .watering-can-droplet-4 {
+  animation: watering-can-drop 0.74s ease-in 1.52s 1;
+}
+.watering-can-wrap.pouring .watering-can-droplet-5 {
+  animation: watering-can-drop 0.7s ease-in 1.81s 1;
+}
+.watering-can-wrap.pouring .watering-can-droplet-6 {
+  animation: watering-can-drop 0.66s ease-in 2.1s 1;
 }
 @keyframes watering-can-drop {
   0% {
     opacity: 0;
     transform: translateY(0);
   }
-  20% {
+  15% {
     opacity: 1;
   }
   100% {
     opacity: 0;
-    transform: translateY(13px);
+    transform: translateY(82px);
   }
 }
 

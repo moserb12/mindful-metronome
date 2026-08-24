@@ -3,6 +3,68 @@
 This file is read automatically by Claude Code at the start of every session
 in this repo. Keep it up to date as decisions get made.
 
+## Status update — watering can redesigned: flipped orientation, 3s left-to-right sweep-pour
+
+A follow-up round on the just-shipped "can travels over the tree" flourish
+— the builder's specific feedback was that the motion "doesn't make any
+sense." Two real problems, both fixed in `WateringCan.tsx` + `index.css`:
+
+- **The can was drawn backwards.** Its spout pointed away from the tree
+  (up-and-right) while it rested to the tree's right — visually, it would
+  have had to pour water behind itself to reach the tree at all. Every
+  path in the SVG is now mirrored (`x' = 60 - x`) so the spout points LEFT
+  toward the tree and the handle sits on the right, matching where the can
+  actually rests. Confirmed by rendering the plain (untilted) glyph at
+  10x scale in a scratch prototype before touching the real component.
+- **The tilt pivot was on the wrong side.** `transform-origin` moved from
+  75%/55% (near the OLD spout, which was on the right) to 25%/55% — now
+  near the spout's NEW position (left). This matters physically, not just
+  cosmetically: rotating around a point near the spout is what makes the
+  spout tip dip DOWNWARD as the can tilts, the way a real pour works;
+  pivoting around the handle side instead swings the spout tip UP, which
+  reads as the opposite of pouring. Verified against several
+  origin/rotation-sign combinations in the same scratch prototype (most
+  produced a can visibly tipping the wrong way) before picking
+  `rotate(-34deg)` around 25%/55%.
+
+On top of the fixed orientation, the whole flourish is now a proper
+sweep, not a quick tilt-in-place:
+
+- **Duration went 1.1s → 3s** (`POUR_DURATION_MS`), per the direct ask for
+  something slower and more deliberate.
+- **The can travels up, then genuinely SWEEPS left-to-right across the
+  whole canopy while pouring** (`watering-can-travel`'s `right` property
+  animates from 58% down to 20% during a long 15%-78% hold window — a
+  LARGER `right` value sits further left on screen, so decreasing it
+  during the hold is what reads as left-to-right), instead of just
+  hovering in one fixed spot. The tilt (`watering-can-tilt`) and six
+  staggered droplets (`watering-can-drop`, delays spread every ~290ms
+  across that same window) are timed to land inside it, so the pour
+  visibly tracks across the branches as the can moves.
+- **Water genuinely reaches the tree now, not just the can's own
+  footprint.** Droplets fall `translateY(82px)` — far past the can's own
+  34px icon box — which works because `.watering-can-svg` is already
+  `overflow: visible`, so nothing clips them before they reach down past
+  the hovering can toward the canopy. A thin continuous stream line
+  (`.watering-can-stream`, fading in/out with the same hold window) runs
+  alongside the discrete droplets for a "continuous trickle," not just
+  isolated drips.
+- **Easing switched from `--ease-harmonic` (this app's usual springy
+  bounce) to `--ease-soft`** (a plain decelerate, no overshoot) for both
+  the travel and the tilt, per the explicit ask to "ease the movements
+  naturally" — a bouncy spring reads as playful, which is wrong for
+  something that's supposed to look like carefully pouring water.
+
+Verified live via Playwright: rendered the resting can at 10x scale to
+confirm the flipped orientation reads correctly (spout left, handle
+right), sampled `.watering-can-wrap`'s computed `right`/`bottom` at six
+points across the full 3s animation to confirm the sweep actually
+progresses left-to-right and holds level while sweeping, and screenshotted
+a zoomed crop mid-pour showing the can correctly tilted with a droplet
+already well below the can's own body, on its way down toward the tree.
+`npx tsc -b`, `npx vitest run` (100/100, unchanged — this is a pure
+visual/CSS/SVG change), `npm run build` all stayed green.
+
 ## Status update — layout spacing, watering can travels over the tree, redrawn lightbulb/crescent-moon, non-italic info icon, poll fix
 
 A round of six polish fixes from a direct screenshot with annotations, all
