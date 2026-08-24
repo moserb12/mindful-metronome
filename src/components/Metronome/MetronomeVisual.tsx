@@ -94,19 +94,35 @@ interface AmbientParticle {
   r: number;
   durSec: number;
   delaySec: number;
+  /** Each particle's own randomized drift DIRECTION and BASE distance (SVG
+   * units, before the live energy multiplier below scales it) — mostly
+   * upward (embers rising) with a wide horizontal spread so nine particles
+   * don't all travel in lockstep along one identical vector, the same
+   * "individually randomized, not uniform" reasoning AMBIENT_PARTICLES'
+   * own cx/cy/r/dur/delay already use. */
+  dxBase: number;
+  dyBase: number;
 }
 const AMBIENT_PARTICLE_COUNT = 9;
-const AMBIENT_PARTICLES: AmbientParticle[] = Array.from({ length: AMBIENT_PARTICLE_COUNT }, () => ({
-  cx: 24 + Math.random() * (VIEW - 48),
-  cy: 24 + Math.random() * (VIEW - 48),
-  r: 1 + Math.random() * 1.8,
-  durSec: 11 + Math.random() * 9,
-  // Negative delay starts each particle mid-cycle (CSS runs the animation
-  // as though it had already been playing for |delay| seconds) so all 9
-  // don't fade in together on mount, reading as already-ambient rather
-  // than freshly spawned.
-  delaySec: -Math.random() * 18,
-}));
+const AMBIENT_PARTICLES: AmbientParticle[] = Array.from({ length: AMBIENT_PARTICLE_COUNT }, () => {
+  // Mostly-upward angle (-90°) with wide jitter (±~50°) — reads as embers
+  // floating up, not a mechanical straight-line drift.
+  const angle = -Math.PI / 2 + (Math.random() - 0.5) * 1.8;
+  const magnitude = 16 + Math.random() * 14;
+  return {
+    cx: 24 + Math.random() * (VIEW - 48),
+    cy: 24 + Math.random() * (VIEW - 48),
+    r: 1 + Math.random() * 1.8,
+    durSec: 11 + Math.random() * 9,
+    // Negative delay starts each particle mid-cycle (CSS runs the animation
+    // as though it had already been playing for |delay| seconds) so all 9
+    // don't fade in together on mount, reading as already-ambient rather
+    // than freshly spawned.
+    delaySec: -Math.random() * 18,
+    dxBase: Math.cos(angle) * magnitude,
+    dyBase: Math.sin(angle) * magnitude,
+  };
+});
 
 /**
  * Degrees to feed the arm's `rotate(deg, cx, cy)` SVG transform so that a
@@ -642,6 +658,18 @@ export function MetronomeVisual({
   const bandInfo = BANDS[band];
   const mood = MOOD_BY_BAND[band];
   const hasSession = sessionPhase !== 'idle';
+
+  // Ambient particles' drift distance AND speed both scale with this one
+  // factor — the band's own character (mood.particleEnergyMul) blended
+  // with the LIVE bpm (normalized 0..1 against the app's real MIN_BPM/
+  // MAX_BPM range, the same normalization useMetronomeEngine's own
+  // tempoT already uses for the tempo-weight's rail position), so
+  // dragging the tempo weight visibly speeds particles up even within
+  // one band, not just when switching bands entirely. 0.6..1.4 is the
+  // live-bpm contribution's own range — a real but secondary effect next
+  // to the band's own baseline character.
+  const bpmT = clamp((bpm - MIN_BPM) / (MAX_BPM - MIN_BPM), 0, 1);
+  const particleEnergyMul = mood.particleEnergyMul * (0.6 + bpmT * 0.8);
 
   // Two small, purely decorative one-shot flourishes — tapping the pyramid
   // or the eye's outer ring plays a brief animation via a toggled CSS
@@ -1224,7 +1252,19 @@ export function MetronomeVisual({
               cx={p.cx}
               cy={p.cy}
               r={p.r}
-              style={{ '--particle-dur': `${p.durSec}s`, '--particle-delay': `${p.delaySec}s` } as React.CSSProperties}
+              style={
+                {
+                  // Duration divides by the energy multiplier (more
+                  // energy = faster/shorter cycle); dx/dy multiply by it
+                  // (more energy = further spread) — computed fully here
+                  // rather than via nested calc(var()/var()) in CSS, so
+                  // there's one obvious place reading both bpm and mood.
+                  '--particle-dur': `${p.durSec / particleEnergyMul}s`,
+                  '--particle-delay': `${p.delaySec}s`,
+                  '--particle-dx': `${p.dxBase * particleEnergyMul}px`,
+                  '--particle-dy': `${p.dyBase * particleEnergyMul}px`,
+                } as React.CSSProperties
+              }
             />
           ))}
         </g>

@@ -3,6 +3,75 @@
 This file is read automatically by Claude Code at the start of every session
 in this repo. Keep it up to date as decisions get made.
 
+## Status update — focus mode chrome pinned to the screen edges; ambient particles now scale with band + live bpm
+
+Two changes from a screenshot with annotated arrows pointing at focus
+mode's cramped top/bottom chrome, plus a request to make the ambient
+particles feel more alive.
+
+**Focus mode: hint text, close button, and the state-badge/Pause row now
+pin to the true viewport edges**, freeing the pyramid to fill far more of
+the screen. Previously these three pieces of chrome were laid out inside
+`.metronome-stage.focus-mode`'s own flex column (competing for space via
+`gap` alongside the visual frame), and the hint text in particular
+collapsed to float awkwardly near the top of a comparatively small frame
+rather than the actual screen edge — this is also why the hint text and
+close button visually crowded each other in the original screenshot.
+Fixed in `index.css` with focus-mode-scoped `position: fixed` overrides on
+`.tempo-weight-hint` (top, side-padded to clear the close button),
+`.focus-mode-toggle` (true top-right corner), and `.stage-readout`
+(bottom) — none of App.tsx's JSX changed, this is a pure CSS relayout.
+With that chrome out of the flex flow entirely, `.metronome-visual-frame`
+in focus mode grew from `min(72vh, 88vw, 640px)` to `min(80vh, 90vw,
+720px)`.
+
+⚠️ **A real CSS gotcha surfaced while wiring this up, worth remembering for
+any future `position: fixed` inside this component tree.** The hint text
+kept resolving its "fixed" position against `.metronome-visual`'s own box
+instead of the viewport. Root cause: `.metronome-visual`'s entrance
+animation (`panel-rise`, `animation-fill-mode: both`) is considered
+perpetually "in effect" even long after it finishes playing — and per
+spec, ANY non-`none` computed `transform` on an ancestor (even a settled,
+visually-inert identity matrix) establishes a containing block for
+`position: fixed` descendants. A plain `transform: none;` override on
+`.metronome-visual` did NOT fix it — an in-effect CSS animation's own
+per-frame value for a property always wins over a static declaration for
+that property, regardless of selector specificity. The actual fix had to
+cancel the animation itself (`.metronome-stage.focus-mode .metronome-visual
+{ animation: none; }`), which drops `transform` back to its real cascaded
+value. Confirmed via `getComputedStyle().transform` before/after: the
+broken version reported a non-`none` matrix indefinitely; the fix settles
+to `none` genuinely. If a future `position: fixed` element anywhere in
+this subtree seems to be positioning against the wrong box, check for a
+forwards-filled transform animation on an ancestor before assuming the
+CSS itself is wrong.
+
+**Ambient particles now scale in BOTH spread and speed with the current
+band's own character AND the live bpm**, not a fixed drift every band
+shared identically. `MoodProfile` (`data/moods.ts`) gained
+`particleEnergyMul` (delta 0.55 calmest → gamma 1.9 most energetic, same
+per-band curve shape every other mood field already follows).
+`MetronomeVisual.tsx` blends that with the live bpm (normalized against
+the app's real `MIN_BPM`/`MAX_BPM`, the same normalization
+`useMetronomeEngine`'s own tempo math already uses) into one
+`particleEnergyMul` read once per render — so dragging the tempo weight
+visibly speeds particles up even within a single band, not just when
+switching bands entirely. Each of the 9 `AMBIENT_PARTICLES` also gained
+its own randomized drift DIRECTION and base distance (`dxBase`/`dyBase`,
+mostly-upward with wide jitter) instead of every particle sharing one
+identical fixed translate vector — combined with the energy multiplier,
+final per-particle `--particle-dx`/`--particle-dy`/`--particle-dur` are
+computed in JS and fed to `index.css`'s `ambient-particle-drift` keyframe
+via `var()`. Verified live: gamma's average drift distance measured
+~5x delta's, and gamma's average cycle duration ~5x shorter (faster); a
+live +30 bpm bump within alpha alone measurably increased spread and
+shortened duration too.
+
+Verified together: `npx tsc -b`, `npx vitest run` (100/100, unchanged —
+pure CSS/visual), `npm run build`, and a live Playwright pass covering
+both changes (edge measurements for the focus-mode chrome, computed
+`--particle-*` custom-property stats across bands and a live bpm change).
+
 ## Status update — mystery-medallion section renamed to "Fortune's Orchard"
 
 The dashboard's RNG-collectible section was labelled "RNG unlockable

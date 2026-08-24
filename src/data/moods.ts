@@ -74,6 +74,16 @@ export interface MoodProfile {
    * overshoot (energized bands) — same curve TempoWeight's own drag
    * response and every hover/press transition in this app already use. */
   tapSpinEase: 'soft' | 'harmonic';
+  /** Multiplier on the ambient background particles' drift distance AND
+   * speed (shorter animation-duration = faster cycling) — one knob for
+   * both, since "more energetic" naturally means both "travels further"
+   * and "moves faster" for something this ambient. Read once per render
+   * in MetronomeVisual (not a per-frame rAF value like waveSpeedMul),
+   * and further blended there with the LIVE bpm (not just the band), so
+   * dragging the tempo weight within a band visibly speeds particles up
+   * too, not just switching bands — see the particleEnergyMul calc next
+   * to AMBIENT_PARTICLES' render. */
+  particleEnergyMul: number;
 }
 
 export const MOOD_BY_BAND: Record<BrainwaveBand, MoodProfile> = {
@@ -90,6 +100,7 @@ export const MOOD_BY_BAND: Record<BrainwaveBand, MoodProfile> = {
     tapSpinTurns: 1,
     tapSpinDurationSec: 1.45,
     tapSpinEase: 'soft',
+    particleEnergyMul: 0.55,
   },
   // chill / dreamy — drifts off eventually; a slow-ish double turn.
   theta: {
@@ -103,6 +114,7 @@ export const MOOD_BY_BAND: Record<BrainwaveBand, MoodProfile> = {
     tapSpinTurns: 2,
     tapSpinDurationSec: 1.5,
     tapSpinEase: 'soft',
+    particleEnergyMul: 0.8,
   },
   // peaceful — today's exact baseline for every OTHER field; a clean,
   // pleasant double turn with a touch of springy settle is the natural
@@ -118,6 +130,7 @@ export const MOOD_BY_BAND: Record<BrainwaveBand, MoodProfile> = {
     tapSpinTurns: 2,
     tapSpinDurationSec: 1.25,
     tapSpinEase: 'harmonic',
+    particleEnergyMul: 1.0,
   },
   // happy / upbeat — a little antsy; a snappier triple turn.
   beta: {
@@ -131,6 +144,7 @@ export const MOOD_BY_BAND: Record<BrainwaveBand, MoodProfile> = {
     tapSpinTurns: 3,
     tapSpinDurationSec: 1.05,
     tapSpinEase: 'harmonic',
+    particleEnergyMul: 1.45,
   },
   // energized — can't sit still, least patient; a fast four-turn flurry.
   gamma: {
@@ -144,5 +158,6 @@ export const MOOD_BY_BAND: Record<BrainwaveBand, MoodProfile> = {
     tapSpinTurns: 4,
     tapSpinDurationSec: 0.95,
     tapSpinEase: 'harmonic',
+    particleEnergyMul: 1.9,
   },
 };

@@ -242,15 +242,70 @@ select:hover {
   inset: 0;
   z-index: 60;
   background: var(--bg-0);
-  /* "A good balance of padding to let it breathe" — generous on every
-     side, biased vertically so a wide/short viewport still gets real
-     breathing room above and below rather than the visual touching the
-     top and bottom edges. */
-  padding: 8vh 6vw;
   justify-content: center;
 }
+/* Bigger than the old 72vh/88vw/640px cap — the tempo hint, close button,
+   and state-badge/Pause row all move to the viewport's own edges below
+   (position:fixed, taken out of this flex column's flow entirely), so
+   the frame is no longer sharing vertical space with them via gap; it can
+   genuinely fill more of the screen. */
 .metronome-stage.focus-mode .metronome-visual-frame {
-  width: min(72vh, 88vw, 640px);
+  width: min(80vh, 90vw, 720px);
+}
+/* The tempo hint pins to the true top edge (it's the only thing left in
+   flow inside .metronome-visual, per its own base-rule comment above —
+   here it's lifted out of that flow entirely) instead of floating in the
+   middle of a wide gap above a comparatively small frame. Side padding
+   scales with viewport (not the base rule's fixed 44px) so it reliably
+   clears the close button, which now sits independently pinned to the
+   corner rather than anchored to the frame's own edge. */
+/* .metronome-visual's entrance animation (panel-rise, "both" fill mode)
+   keeps computing a transform (settling to the identity matrix, then
+   staying there forever — "both" fill means the animation is considered
+   perpetually "in effect," even long after it visually finishes) rather
+   than ever reverting to the `none` keyword. Per spec, ANY non-`none`
+   transform on an ancestor — even a computed no-op identity matrix —
+   establishes a containing block for `position: fixed` descendants, so
+   without this override the hint's "fixed" below resolves against
+   .metronome-visual's own box instead of the viewport (it sits near the
+   top of the frame, not the actual screen edge). A plain `transform:
+   none;` override does NOT fix this: an in-effect CSS animation's
+   per-frame value for a property always wins over a static declaration
+   for that same property, regardless of selector specificity — the fix
+   has to cancel the animation itself (`animation: none`), which drops
+   the property back to its normal cascaded value (here, genuinely
+   `none`, since nothing else sets a static transform). Visually
+   identical to letting it finish — by the time anyone reaches focus
+   mode, the one-shot entrance animation is long over. */
+.metronome-stage.focus-mode .metronome-visual {
+  animation: none;
+}
+.metronome-stage.focus-mode .tempo-weight-hint {
+  position: fixed;
+  top: 2.5vh;
+  left: 0;
+  right: 0;
+  margin: 0;
+  padding: 0 max(70px, 8vw);
+  z-index: 2;
+}
+.metronome-stage.focus-mode .focus-mode-toggle {
+  position: fixed;
+  top: 2.5vh;
+  right: 2.5vw;
+  z-index: 3;
+}
+/* State badge + Pause pin to the true bottom edge, same reasoning as the
+   hint above — freed from the flex column's gap so the frame between
+   them can grow. */
+.metronome-stage.focus-mode .stage-readout {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 3vh;
+  margin: 0;
+  justify-content: center;
+  z-index: 2;
 }
 
 /* ---------- Metronome visual ---------- */
@@ -295,9 +350,14 @@ select:hover {
 /* Ambient particles — a handful of small dots drifting slowly around the
    pyramid, tinted with the live --band-color. Purely decorative: no
    pointer-events, aria-hidden in the markup. Each circle's own duration/
-   delay come in via inline custom properties (see AMBIENT_PARTICLES in
-   MetronomeVisual.tsx) so every particle drifts at its own pace instead
-   of all nine breathing in lockstep. */
+   delay/drift-vector come in via inline custom properties (see
+   AMBIENT_PARTICLES + particleEnergyMul in MetronomeVisual.tsx) — the
+   drift DIRECTION/base distance is randomized per particle so nine of
+   them don't all travel one identical vector, and both the distance
+   (--particle-dx/-dy) and the speed (--particle-dur, inversely) scale
+   with particleEnergyMul, itself a blend of the band's own character and
+   the LIVE bpm — a sleepy delta at a slow tempo barely drifts, while a
+   fast gamma scatters wide and fast. */
 .ambient-particles {
   pointer-events: none;
 }
@@ -317,14 +377,14 @@ select:hover {
   }
   50% {
     opacity: 0.6;
-    transform: translate(7px, -16px);
+    transform: translate(calc(var(--particle-dx, 7px) * 0.55), calc(var(--particle-dy, -16px) * 0.55));
   }
   88% {
     opacity: 0.15;
   }
   100% {
     opacity: 0;
-    transform: translate(-5px, -28px);
+    transform: translate(var(--particle-dx, -5px), var(--particle-dy, -28px));
   }
 }
 
