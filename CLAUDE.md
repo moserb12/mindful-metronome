@@ -3,6 +3,84 @@
 This file is read automatically by Claude Code at the start of every session
 in this repo. Keep it up to date as decisions get made.
 
+## Status update — ambient particles rebuilt: emerge from the eye, genuinely beat-synced pulse-then-freeze
+
+A follow-up on the particle work above, after direct feedback that the
+previous version "didn't make any sense": particles should visibly
+EMERGE from the pyramid's own center and flow outward, and delta's
+particles read as completely frozen (too slow to perceive), with the
+suggestion to loosely tie speed to the pendulum's own swing so it
+"pulses and freezes." All three are now literally true, not just
+approximated:
+
+- **Particles are no longer CSS-animated at all.** The previous version
+  (a fixed per-particle scatter position drifting via an independent CSS
+  `@keyframes` clock, sped up/slowed down by a fabricated per-band
+  `particleEnergyMul`) is gone entirely — `particleEnergyMul` is removed
+  from `MoodProfile` (`data/moods.ts`) and the `.ambient-particles
+  circle` CSS `animation` + `@keyframes ambient-particle-drift` are
+  deleted from `index.css`. Position and opacity are now written directly
+  as SVG attributes every rAF frame, inside the SAME swing-driven loop
+  that already moves the pendulum arm (`frame()` in
+  `MetronomeVisual.tsx`) — the identical imperative-ref pattern
+  `armRef`/`pupilRef` already use, via a new `particleRefs` array.
+  ⚠️ One real trap hit along the way: `index.css` must never set a static
+  `opacity` on `.ambient-particles circle` — a CSS declaration always
+  beats an SVG presentation attribute in the cascade, so any such rule
+  would permanently override every opacity the JS sets, no matter what.
+- **Genuinely tied to the real swing, not an approximation of it.**
+  `computeSwingSegment` (already called every frame for the arm itself)
+  hands back the current beat-segment's `fromTimeSec`/`toTimeSec`; a
+  `beatIndex` is derived as `Math.round((segment.fromTimeSec -
+  swing.referenceTimeSec) / swing.secondsPerBeat)` — a plain elapsed-time
+  division against the swing's own fixed reference (this app's usual
+  anti-drift approach), not an accumulated counter. Each particle reads
+  `(beatIndex + its own stepOffset) % PARTICLE_MAX_STEPS` as which "step"
+  of its outward journey it's on. Within the CURRENT segment, `t` (0..1
+  progress through it, already computed for the arm's own easing) drives
+  a quick ease-out rise over the first `PARTICLE_PULSE_FRACTION` (0.3) —
+  the "pulse" — that then holds flat for the rest of the segment — the
+  "freeze." The result: every particle visibly jumps outward right as
+  the pendulum leaves one side, then sits still until it arrives at the
+  other side and leaves again — literally the pendulum's own swing rate,
+  not a fixed real-seconds duration divided by a guessed multiplier.
+  This is also what fixes delta specifically: a discrete, visible jump
+  reads as motion regardless of how far apart in real time (delta's
+  slower bpm) those jumps land — the old continuous-drift version's
+  problem was a tiny distance divided by a long duration, imperceptible
+  regardless of tempo.
+- **Genuinely emerges from the eye and flows outward.** Each particle now
+  has a fixed `angle` (0..2π, radiating in all directions across the 9)
+  and travels `progress * PARTICLE_MAX_RADIUS * radiusMul` from `EYE`
+  itself (`x = EYE.x + cos(angle)*radius`, same for y) — `progress` climbs
+  in discrete per-beat steps from 0 (AT the eye) to 1 over
+  `PARTICLE_MAX_STEPS` (12) beats, then wraps back to 0 to restart the
+  journey with a fresh pulse. `PARTICLE_MAX_RADIUS` (170 SVG units) is
+  well past the pyramid's own edges, so particles genuinely flow out into
+  the open space around it. Opacity follows `sin(progress * π)` — fades
+  in leaving the center, out approaching the wrap — which has the nice
+  side effect of making the radius-snapping-back-to-0 reset invisible:
+  by the time a particle wraps, it's already faded to ~0 opacity.
+  Per-particle `stepOffset` (random, 0..11) staggers all 9 across
+  different points of the SAME shared journey, so they read as a
+  continuous outward-flowing swarm — all locked to the same beat rhythm —
+  rather than 9 particles bursting and resetting in unison.
+- **Idle/paused state**: since this now lives entirely inside the
+  swing-driven rAF loop (which only runs while playing — pausing runs a
+  SEPARATE settle-tail effect instead), particles would otherwise freeze
+  wherever they were the instant playback stopped. `snapToRest()` (called
+  by that settle-tail once the arm/pupil finish decaying) now also parks
+  every particle back at `EYE`, invisible — their genuine starting state
+  for the next Play press too.
+
+Verified live via Playwright, playing back-to-back on delta then gamma
+and sampling every 400ms: delta showed IDENTICAL distance readings across
+consecutive samples (the freeze) then a clear jump (the pulse), at a
+visibly slower cadence than gamma, whose readings changed almost every
+sample. After pausing, every particle read back `dist: 0, opacity: 0`.
+`npx tsc -b`, `npx vitest run` (100/100, unchanged), `npm run build` all
+stayed green.
+
 ## Status update — focus mode chrome pinned to the screen edges; ambient particles now scale with band + live bpm
 
 Two changes from a screenshot with annotated arrows pointing at focus

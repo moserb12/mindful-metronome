@@ -347,45 +347,24 @@ select:hover {
   perspective: 900px;
 }
 
-/* Ambient particles — a handful of small dots drifting slowly around the
-   pyramid, tinted with the live --band-color. Purely decorative: no
-   pointer-events, aria-hidden in the markup. Each circle's own duration/
-   delay/drift-vector come in via inline custom properties (see
-   AMBIENT_PARTICLES + particleEnergyMul in MetronomeVisual.tsx) — the
-   drift DIRECTION/base distance is randomized per particle so nine of
-   them don't all travel one identical vector, and both the distance
-   (--particle-dx/-dy) and the speed (--particle-dur, inversely) scale
-   with particleEnergyMul, itself a blend of the band's own character and
-   the LIVE bpm — a sleepy delta at a slow tempo barely drifts, while a
-   fast gamma scatters wide and fast. */
+/* Ambient particles — a handful of small dots emerging from the eye's own
+   center and flowing outward in all directions, tinted with the live
+   --band-color. Purely decorative: no pointer-events, aria-hidden in the
+   markup. Position AND opacity are written directly (SVG attributes, not
+   CSS) every rAF frame by MetronomeVisual's swing-driven loop — genuinely
+   tied to the pendulum's real swing timing (a stepped "pulse then
+   freeze" per beat-segment, not a smooth independent clock), so there's
+   deliberately no CSS `animation` here. Critically, this file must NOT
+   set a static `opacity` on `.ambient-particles circle`: a CSS
+   declaration always wins over an SVG presentation attribute in the
+   cascade, so a plain `opacity: 0;` rule here would permanently override
+   every opacity the JS writes, making the particles invisible forever
+   regardless of what MetronomeVisual sets. */
 .ambient-particles {
   pointer-events: none;
 }
 .ambient-particles circle {
   fill: var(--band-color, #a78bfa);
-  opacity: 0;
-  animation: ambient-particle-drift var(--particle-dur, 16s) ease-in-out infinite;
-  animation-delay: var(--particle-delay, 0s);
-}
-@keyframes ambient-particle-drift {
-  0% {
-    opacity: 0;
-    transform: translate(0, 0);
-  }
-  12% {
-    opacity: 0.4;
-  }
-  50% {
-    opacity: 0.6;
-    transform: translate(calc(var(--particle-dx, 7px) * 0.55), calc(var(--particle-dy, -16px) * 0.55));
-  }
-  88% {
-    opacity: 0.15;
-  }
-  100% {
-    opacity: 0;
-    transform: translate(var(--particle-dx, -5px), var(--particle-dy, -28px));
-  }
 }
 
 /* Invisible geometry-only tap target — see the long comment on this

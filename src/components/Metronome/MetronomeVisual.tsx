@@ -77,52 +77,62 @@ const BASE_LEFT = { x: 62, y: 322 };
 const BASE_RIGHT = { x: 338, y: 322 };
 const EYE = { x: 200, y: 224 };
 
-/** A handful of ambient particles drifting slowly around the pyramid —
- * purely decorative (aria-hidden, pointer-events: none), tinted with the
- * live `--band-color` so they shift with whichever vibe is active. Scatter
- * is computed ONCE at module load, not per-render/mount — a fresh
- * scatter each page load is fine (even welcome, for variety) but they'd
- * look broken if they re-randomized position on every React re-render,
- * the same reasoning the fractal tree's own branch jitter avoids
- * `Math.random()` for (see engine/fractalTree.ts's seededRandom doc
- * comment) — the difference here is this only needs to be stable across
- * RE-RENDERS of one mounted instance, not byte-identical across mounts,
- * so a plain one-time Math.random() at module scope is enough. */
+/** A handful of ambient particles emerging from the eye's own center and
+ * flowing outward in all directions — purely decorative (aria-hidden,
+ * pointer-events: none), tinted with the live `--band-color`. Unlike
+ * every other per-frame value in this file, their motion isn't computed
+ * from a smooth time-based formula: it's stepped, driven directly by
+ * computeSwingSegment's own beat-index (see the rAF loop below) so each
+ * particle visibly PULSES outward right as the pendulum leaves one side,
+ * then FREEZES in place for the rest of that swing — "loosely tied to
+ * the speed of the pendulum," per the builder's own framing, rather than
+ * an independent decorative clock. That also fixes an earlier version
+ * (a fixed real-seconds duration divided by a per-band multiplier) where
+ * slow bands like delta ended up moving so little per frame the drift
+ * was imperceptible — a discrete per-beat jump is visible regardless of
+ * how far apart in real time those beats land.
+ *
+ * Static per-particle data (angle/stepOffset/radiusMul/r) is computed
+ * ONCE at module load, same "stable across re-renders of one mounted
+ * instance, not byte-identical across mounts" reasoning as the fractal
+ * tree's own branch jitter (see engine/fractalTree.ts's seededRandom doc
+ * comment) — a plain one-time Math.random() here is enough. */
 interface AmbientParticle {
-  cx: number;
-  cy: number;
+  /** Fixed outward direction, in radians — this particle always flows
+   * the same way each time its journey resets, radiating in all
+   * directions across the full 9-particle set. */
+  angle: number;
+  /** Which "step" (0..PARTICLE_MAX_STEPS-1) of the shared beat-index this
+   * particle currently reads as ITS zero — staggers particles across
+   * different points of their outward journey at any given moment
+   * instead of all 9 bunching at the same radius and resetting in
+   * lockstep, while still keeping every one of them locked to the same
+   * real beat-index driving the pulse-then-freeze rhythm. */
+  stepOffset: number;
+  /** Per-particle multiplier on PARTICLE_MAX_RADIUS, for a bit of
+   * variety in how far out each one travels before resetting. */
+  radiusMul: number;
   r: number;
-  durSec: number;
-  delaySec: number;
-  /** Each particle's own randomized drift DIRECTION and BASE distance (SVG
-   * units, before the live energy multiplier below scales it) — mostly
-   * upward (embers rising) with a wide horizontal spread so nine particles
-   * don't all travel in lockstep along one identical vector, the same
-   * "individually randomized, not uniform" reasoning AMBIENT_PARTICLES'
-   * own cx/cy/r/dur/delay already use. */
-  dxBase: number;
-  dyBase: number;
 }
 const AMBIENT_PARTICLE_COUNT = 9;
-const AMBIENT_PARTICLES: AmbientParticle[] = Array.from({ length: AMBIENT_PARTICLE_COUNT }, () => {
-  // Mostly-upward angle (-90°) with wide jitter (±~50°) — reads as embers
-  // floating up, not a mechanical straight-line drift.
-  const angle = -Math.PI / 2 + (Math.random() - 0.5) * 1.8;
-  const magnitude = 16 + Math.random() * 14;
-  return {
-    cx: 24 + Math.random() * (VIEW - 48),
-    cy: 24 + Math.random() * (VIEW - 48),
-    r: 1 + Math.random() * 1.8,
-    durSec: 11 + Math.random() * 9,
-    // Negative delay starts each particle mid-cycle (CSS runs the animation
-    // as though it had already been playing for |delay| seconds) so all 9
-    // don't fade in together on mount, reading as already-ambient rather
-    // than freshly spawned.
-    delaySec: -Math.random() * 18,
-    dxBase: Math.cos(angle) * magnitude,
-    dyBase: Math.sin(angle) * magnitude,
-  };
-});
+/** How many beat-segments (half-swings) a particle's full outward journey
+ * takes before it resets back to the center and starts over. */
+const PARTICLE_MAX_STEPS = 12;
+/** How far out (SVG units from EYE) a particle travels at the end of its
+ * journey, before the per-particle radiusMul jitter — well past the
+ * pyramid's own edges (EYE sits ~130-150 units from the triangle's sides),
+ * so particles genuinely flow out into the open space around it. */
+const PARTICLE_MAX_RADIUS = 170;
+/** Fraction of each beat-segment spent actually rising (the "pulse") —
+ * the remainder is the "freeze": the particle just holds at its new
+ * radius until the next beat's pulse. */
+const PARTICLE_PULSE_FRACTION = 0.3;
+const AMBIENT_PARTICLES: AmbientParticle[] = Array.from({ length: AMBIENT_PARTICLE_COUNT }, () => ({
+  angle: Math.random() * Math.PI * 2,
+  stepOffset: Math.floor(Math.random() * PARTICLE_MAX_STEPS),
+  radiusMul: 0.75 + Math.random() * 0.5,
+  r: 1 + Math.random() * 1.8,
+}));
 
 /**
  * Degrees to feed the arm's `rotate(deg, cx, cy)` SVG transform so that a
@@ -629,6 +639,11 @@ export function MetronomeVisual({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const smoothedRef = useRef<number[] | null>(null);
   const rafRef = useRef<number | null>(null);
+  /** One ref per AMBIENT_PARTICLE, written directly every frame (same
+   * imperative-DOM-write pattern as armRef/pupilRef above) — the
+   * pulse-then-freeze motion needs per-frame precision the React render
+   * cycle isn't built for. */
+  const particleRefs = useRef<(SVGCircleElement | null)[]>([]);
   /** The last RENDERED total angle (post-ramp, post-wiggle) — seeds the
    * settle-tail's decay-to-zero starting point when Pause/Stop is
    * pressed, so it always continues smoothly from wherever the arm
@@ -658,18 +673,6 @@ export function MetronomeVisual({
   const bandInfo = BANDS[band];
   const mood = MOOD_BY_BAND[band];
   const hasSession = sessionPhase !== 'idle';
-
-  // Ambient particles' drift distance AND speed both scale with this one
-  // factor — the band's own character (mood.particleEnergyMul) blended
-  // with the LIVE bpm (normalized 0..1 against the app's real MIN_BPM/
-  // MAX_BPM range, the same normalization useMetronomeEngine's own
-  // tempoT already uses for the tempo-weight's rail position), so
-  // dragging the tempo weight visibly speeds particles up even within
-  // one band, not just when switching bands entirely. 0.6..1.4 is the
-  // live-bpm contribution's own range — a real but secondary effect next
-  // to the band's own baseline character.
-  const bpmT = clamp((bpm - MIN_BPM) / (MAX_BPM - MIN_BPM), 0, 1);
-  const particleEnergyMul = mood.particleEnergyMul * (0.6 + bpmT * 0.8);
 
   // Two small, purely decorative one-shot flourishes — tapping the pyramid
   // or the eye's outer ring plays a brief animation via a toggled CSS
@@ -854,6 +857,18 @@ export function MetronomeVisual({
       pupilRef.current.setAttribute('cx', String(EYE.x));
       pupilRef.current.setAttribute('cy', String(EYE.y));
     }
+    // Particles are entirely driven by the pendulum's real swing (see the
+    // rAF loop below) — with no swing running while at rest, nothing
+    // would otherwise reset them, so they'd stay frozen wherever they
+    // happened to be mid-flow the moment playback stopped. Parking them
+    // invisibly at the eye's own center is also their genuine starting
+    // state for the next Play press.
+    for (const el of particleRefs.current) {
+      if (!el) continue;
+      el.setAttribute('cx', String(EYE.x));
+      el.setAttribute('cy', String(EYE.y));
+      el.setAttribute('opacity', '0');
+    }
     lastAngleRef.current = 0;
     lastWaveAmplitudeRef.current = 0;
     settlingRef.current = false;
@@ -975,6 +990,39 @@ export function MetronomeVisual({
         if (subdivision !== 'ENDS') {
           const centerCrossSec = segment.fromTimeSec + span / 2; // geometric midpoint, independent of audio scheduling
           wiggle += wiggleFor(now - centerCrossSec) * CENTER_WIGGLE_SCALE;
+        }
+
+        // Ambient particles: which beat-segment (half-swing) is THIS one,
+        // counting from swing.referenceTimeSec — a plain elapsed-time
+        // division, not an accumulated counter, so it can't drift and
+        // stays correct even if bpm changes mid-play (swing itself gets
+        // re-anchored whenever that happens). Each segment advances this
+        // by exactly 1, so it's genuinely "the speed of the pendulum as
+        // it swings side to side," not an approximation of it.
+        const beatIndex = Math.round((segment.fromTimeSec - swing.referenceTimeSec) / swing.secondsPerBeat);
+        // Quick rise over the first PARTICLE_PULSE_FRACTION of the
+        // segment (the "pulse"), then holds at 1 — the "freeze" — for
+        // the rest of it.
+        const pulseT = Math.min(1, t / PARTICLE_PULSE_FRACTION);
+        const pulseEased = 1 - Math.pow(1 - pulseT, 3);
+        for (let i = 0; i < AMBIENT_PARTICLES.length; i++) {
+          const el = particleRefs.current[i];
+          if (!el) continue;
+          const p = AMBIENT_PARTICLES[i];
+          const stepIndex = (((beatIndex + p.stepOffset) % PARTICLE_MAX_STEPS) + PARTICLE_MAX_STEPS) % PARTICLE_MAX_STEPS;
+          const progress = (stepIndex + pulseEased) / PARTICLE_MAX_STEPS;
+          const radius = progress * PARTICLE_MAX_RADIUS * p.radiusMul;
+          const x = EYE.x + Math.cos(p.angle) * radius;
+          const y = EYE.y + Math.sin(p.angle) * radius;
+          // Fades in leaving the center, out approaching the reset —
+          // conveniently, this also means the radius snapping back to 0
+          // at the wrap from stepIndex MAX-1 back to 0 happens exactly
+          // when opacity has already faded to ~0, so the reset itself is
+          // never visible as a jump.
+          const opacity = Math.max(0, Math.sin(Math.min(1, progress) * Math.PI)) * 0.6;
+          el.setAttribute('cx', String(x));
+          el.setAttribute('cy', String(y));
+          el.setAttribute('opacity', String(opacity));
         }
       }
 
@@ -1244,27 +1292,22 @@ export function MetronomeVisual({
         aria-label="Mindful Metronome visual"
       >
         {/* Ambient particles — rendered first so they sit BEHIND everything
-            else (pyramid, eye, pendulum). Purely decorative. */}
+            else (pyramid, eye, pendulum). Purely decorative. Positioned
+            imperatively every frame by the rAF loop above (see
+            particleRefs) — cx/cy/opacity here are just the pre-JS/at-rest
+            fallback (parked at the eye's own center, invisible), the same
+            role EYE.x/EYE.y play for pupilRef below. */}
         <g className="ambient-particles" aria-hidden="true">
           {AMBIENT_PARTICLES.map((p, i) => (
             <circle
               key={i}
-              cx={p.cx}
-              cy={p.cy}
+              ref={(el) => {
+                particleRefs.current[i] = el;
+              }}
+              cx={EYE.x}
+              cy={EYE.y}
               r={p.r}
-              style={
-                {
-                  // Duration divides by the energy multiplier (more
-                  // energy = faster/shorter cycle); dx/dy multiply by it
-                  // (more energy = further spread) — computed fully here
-                  // rather than via nested calc(var()/var()) in CSS, so
-                  // there's one obvious place reading both bpm and mood.
-                  '--particle-dur': `${p.durSec / particleEnergyMul}s`,
-                  '--particle-delay': `${p.delaySec}s`,
-                  '--particle-dx': `${p.dxBase * particleEnergyMul}px`,
-                  '--particle-dy': `${p.dyBase * particleEnergyMul}px`,
-                } as React.CSSProperties
-              }
+              opacity={0}
             />
           ))}
         </g>
