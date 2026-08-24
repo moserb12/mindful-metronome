@@ -3,6 +3,19 @@
 This file is read automatically by Claude Code at the start of every session
 in this repo. Keep it up to date as decisions get made.
 
+## Status update — mystery-medallion section renamed to "Fortune's Orchard"
+
+The dashboard's RNG-collectible section was labelled "RNG unlockable
+skins" — flat, mechanic-first phrasing that didn't match the rest of this
+app's tone. Presented the builder four options playing off the app's
+existing garden/mystical framing (Focus Garden, harvested mystery fruit,
+the pyramid/eye register); she picked **"Fortune's Orchard."**
+`FocusDashboard.tsx`'s `mystery-collection` `<details>` summary now reads
+"Fortune's Orchard — N/51 collected." Purely a label change — no logic,
+data, or id touched; `MYSTERY_MEDALLIONS`/`mysteryUnlockedIds` etc. keep
+their existing internal names on purpose (renaming ids would be a real,
+riskier migration for zero user-facing benefit).
+
 ## Status update — watering can redesigned: flipped orientation, 3s left-to-right sweep-pour
 
 A follow-up round on the just-shipped "can travels over the tree" flourish

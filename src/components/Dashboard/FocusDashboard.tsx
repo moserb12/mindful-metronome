@@ -190,7 +190,7 @@ export function FocusDashboard({
       <details className="focus-card control-group mystery-collection">
         <summary className="control-group-summary">
           <span className="control-label">
-            RNG unlockable skins — {mysteryOwnedIds.length}/{MYSTERY_MEDALLIONS.length} collected
+            Fortune's Orchard — {mysteryOwnedIds.length}/{MYSTERY_MEDALLIONS.length} collected
           </span>
           <span className="control-group-chevron" aria-hidden="true">
             ▸
