@@ -509,6 +509,13 @@ select:hover {
 .tempo-weight-hint {
   text-align: center;
   margin: 10px 0 0;
+  /* .metronome-svg is position:absolute, so this <p> is the only thing
+     left in normal flow inside .metronome-visual — it collapses to the
+     very TOP of the frame, the same corner .focus-mode-toggle (also
+     position:absolute, top:0/right:0 on the frame) anchors to. Horizontal
+     padding keeps a wrapped line from ever running under that button,
+     on both sides so the centered text stays visually centered. */
+  padding: 0 44px;
   font-size: 0.76rem;
   color: var(--text-faint);
 }
@@ -763,6 +770,13 @@ select:hover {
   justify-content: center;
   animation: panel-rise var(--dur-slow) var(--ease-soft) both;
   animation-delay: 0.16s;
+  /* Extra clearance ON TOP of .metronome-stage's own 28px gap, specific to
+     this element — the pendant/spiral medallion at the bottom of the
+     pendulum arm already sits close to the visual frame's own bottom
+     edge (the arm's length leaves only a small margin inside the SVG
+     viewBox), so the frame's 28px flex-gap alone read as the medallion
+     crowding this pill/Begin row right underneath it. */
+  margin-top: 14px;
 }
 .state-badge {
   font-size: 0.82rem;
@@ -1822,10 +1836,41 @@ details[open] > .control-group-summary .control-group-chevron,
   position: absolute;
   right: 8%;
   bottom: 2%;
+  /* Above the tree's own SVG (which paints in normal flow, unpositioned)
+     regardless of DOM order, so the travel animation below genuinely
+     reads as the can passing OVER the branches rather than behind them. */
+  z-index: 2;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 6px;
+  /* right/bottom (not transform) so the travel animation below moves the
+     can relative to .tree-card-stage's own box — a transform: translate()
+     percentage is relative to the ELEMENT's own size, which wouldn't
+     reliably land "over the tree" the way animating these already-
+     percentage-based positioning properties does. */
+}
+.watering-can-wrap.pouring {
+  animation: watering-can-travel 1.1s var(--ease-harmonic) 1;
+}
+/* Travels from its resting spot up and over the tree's canopy, holds
+   there through the tilt + droplets below, then returns — so watering
+   the tree reads as the can passing over the branches, not just tilting
+   in place beside them. */
+@keyframes watering-can-travel {
+  0% {
+    right: 8%;
+    bottom: 2%;
+  }
+  32%,
+  68% {
+    right: 40%;
+    bottom: 56%;
+  }
+  100% {
+    right: 8%;
+    bottom: 2%;
+  }
 }
 .watering-can-button {
   background: none;
@@ -1864,28 +1909,34 @@ details[open] > .control-group-summary .control-group-chevron,
 
 /* One-shot pour flourish on click — same toggled-class-plus-timeout shape
    as .pyramid-group.pyramid-spin/.eye-outer.eye-wink elsewhere in this
-   app. The can body tilts forward around roughly its own base/spout
-   corner, and three droplets fall from the spout tip in a staggered
-   sequence while it's tilted. A direct response to a user's own tap, so —
-   same reasoning as those other flourishes — intentionally not disabled
-   under prefers-reduced-motion. */
+   app. The whole can travels over the tree first (watering-can-travel,
+   above), THEN tilts once it arrives, and three droplets fall from the
+   spout tip while it's tilted and positioned over the canopy — so the
+   pour visibly lands on the tree, not on empty space beside it. Timed
+   against the same 1.1s total duration as the travel: the travel's hold
+   window is 32%-68%, so the tilt ramps up just before that (28%) and
+   holds through it, and the droplets fall squarely inside it. A direct
+   response to a user's own tap, so — same reasoning as those other
+   flourishes — intentionally not disabled under prefers-reduced-motion. */
 .watering-can-tilt-group {
   transform-box: fill-box;
   transform-origin: 75% 55%;
 }
-.watering-can-button.pouring .watering-can-tilt-group {
-  animation: watering-can-tilt 0.9s var(--ease-harmonic) 1;
+.watering-can-wrap.pouring .watering-can-tilt-group {
+  animation: watering-can-tilt 1.1s var(--ease-harmonic) 1;
 }
 @keyframes watering-can-tilt {
-  0% {
+  0%,
+  22% {
     transform: rotate(0deg);
   }
-  35% {
+  40% {
     transform: rotate(-32deg);
   }
-  72% {
+  62% {
     transform: rotate(-32deg);
   }
+  82%,
   100% {
     transform: rotate(0deg);
   }
@@ -1894,14 +1945,14 @@ details[open] > .control-group-summary .control-group-chevron,
   fill: var(--band-color, #7dd3fc);
   opacity: 0;
 }
-.watering-can-button.pouring .watering-can-droplet-1 {
-  animation: watering-can-drop 0.55s ease-in 0.32s 1;
+.watering-can-wrap.pouring .watering-can-droplet-1 {
+  animation: watering-can-drop 0.5s ease-in 0.5s 1;
 }
-.watering-can-button.pouring .watering-can-droplet-2 {
-  animation: watering-can-drop 0.55s ease-in 0.42s 1;
+.watering-can-wrap.pouring .watering-can-droplet-2 {
+  animation: watering-can-drop 0.5s ease-in 0.6s 1;
 }
-.watering-can-button.pouring .watering-can-droplet-3 {
-  animation: watering-can-drop 0.55s ease-in 0.5s 1;
+.watering-can-wrap.pouring .watering-can-droplet-3 {
+  animation: watering-can-drop 0.5s ease-in 0.68s 1;
 }
 @keyframes watering-can-drop {
   0% {
@@ -1985,7 +2036,7 @@ details[open] > .control-group-summary .control-group-chevron,
   border: 1px solid var(--surface-border);
   color: var(--text-faint);
   font-size: 0.72rem;
-  font-style: italic;
+  font-style: normal;
   font-weight: 700;
   cursor: pointer;
   list-style: none;

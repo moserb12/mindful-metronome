@@ -7,9 +7,10 @@ interface WateringCanProps {
   onWater: () => boolean;
 }
 
-/** How long the pour flourish (tilt + falling droplets) plays before the
- * can settles back upright — matches the CSS animation duration below. */
-const POUR_DURATION_MS = 900;
+/** How long the full pour flourish plays — the can travels up and over the
+ * tree, tilts to pour, then travels back to its resting spot — before
+ * settling back upright. Matches the CSS animation durations below. */
+const POUR_DURATION_MS = 1100;
 /** The "a fruit fell!" callout lingers a beat longer than the pour itself
  * so it isn't clipped by the can already settling back to rest. */
 const BONUS_CALLOUT_DURATION_MS = 1700;
@@ -27,7 +28,13 @@ const BONUS_CALLOUT_DURATION_MS = 1700;
  * one-shot animation in this app (pyramidPinging, eyeWinking in
  * MetronomeVisual.tsx): this component owns no stat logic itself, just a
  * toggled `pouring` class and a timeout that clears it, so the CSS
- * animation and the "active" window stay exactly in sync.
+ * animation and the "active" window stay exactly in sync. The `pouring`
+ * class lives on the outer wrap (not just the button) because the pour
+ * flourish now moves the WHOLE can — it travels up and over the tree
+ * (animating the wrap's own right/bottom position, which CSS keeps
+ * relative to the tree card the same way its resting position already is)
+ * while the button's inner SVG tilts and drops water, so it visibly waters
+ * the tree from above rather than just tilting in place beside it.
  */
 export function WateringCan({ onWater }: WateringCanProps) {
   const [pouring, setPouring] = useState(false);
@@ -57,10 +64,10 @@ export function WateringCan({ onWater }: WateringCanProps) {
   }
 
   return (
-    <div className="watering-can-wrap">
+    <div className={`watering-can-wrap ${pouring ? 'pouring' : ''}`}>
       <button
         type="button"
-        className={`watering-can-button ${pouring ? 'pouring' : ''}`}
+        className="watering-can-button"
         onClick={handleClick}
         aria-label="Water the tree"
         title="Water the tree"

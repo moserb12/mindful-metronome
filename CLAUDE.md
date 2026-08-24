@@ -3,6 +3,92 @@
 This file is read automatically by Claude Code at the start of every session
 in this repo. Keep it up to date as decisions get made.
 
+## Status update — layout spacing, watering can travels over the tree, redrawn lightbulb/crescent-moon, non-italic info icon, poll fix
+
+A round of six polish fixes from a direct screenshot with annotations, all
+in `mindful-metronome`.
+
+- **Top-of-visual spacing bug, real root cause found.** The "Drag the
+  weight..." hint text was overlapping the ⛶ focus-mode toggle in the top
+  corner. Root cause: `.metronome-svg` is `position: absolute; inset: 0`,
+  so it contributes NOTHING to normal document flow — `.tempo-weight-hint`
+  (the only element left in flow inside `.metronome-visual`) collapses to
+  the very top of the frame, the exact same corner the toggle button
+  (also `position: absolute; top:0; right:0`) anchors to. Fixed with
+  `padding: 0 44px` on `.tempo-weight-hint` — the paragraph's own block
+  box still spans the full frame width (so don't be fooled by checking
+  its bounding box; verify with an actual screenshot), but the padding
+  keeps the rendered TEXT itself clear of the button on both sides.
+- **Pendant/readout spacing.** The pendant medallion at the bottom of the
+  pendulum arm already sits close to the visual frame's own bottom edge
+  (the arm's length leaves only a small margin inside the SVG viewBox), so
+  `.metronome-stage`'s single 28px flex-gap wasn't enough clearance before
+  the Begin/pill row underneath. Added `margin-top: 14px` to
+  `.stage-readout` specifically (not a blanket gap increase, which would
+  have over-spaced the other stage children too).
+- **Watering can now genuinely travels over the tree to water it**, not
+  just tilts in place beside it. `.watering-can-wrap`'s `pouring` class
+  (moved from the button onto the wrap itself) now also plays a
+  `watering-can-travel` keyframe animating its own `right`/`bottom`
+  percentages (not `transform: translate()`, which is relative to the
+  ELEMENT's own size and wouldn't reliably land "over the tree" the way
+  animating these already-percentage-based positioning properties does)
+  from its resting spot up to hover over the canopy, holds there through
+  the tilt + droplets, then returns. `z-index: 2` on the wrap guarantees
+  it paints above the tree's SVG regardless of DOM order. `POUR_DURATION_MS`
+  went from 900ms to 1100ms to fit travel-there + pour + travel-back, and
+  the tilt/droplet keyframes were retimed to land inside the travel's
+  32%-68% hold window so the pour visibly lands on the branches.
+- **Lightbulb medallion redrawn.** The old glyph was a plain circle with a
+  short line floating ABOVE it, not touching it (read as "a weird
+  string") and nothing inside (no filament). New version
+  (`MedallionIcon.tsx`'s `lightbulb` case): a real tapered bulb-glass
+  outline (rounds at the top, narrows into the neck — not just a circle),
+  a genuine zigzag filament with two leads drawn inside it, then the
+  threaded screw base below. No stray disconnected elements.
+- **Crescent-moon medallion — an actual geometry bug, not just an
+  off-center feel.** The two-circle-plus-`fillRule="evenodd"` technique
+  (`circleSubpath(50,50,28)` minus `circleSubpath(63,41,23)`) only
+  produces a clean crescent if the CUTOUT circle sits entirely INSIDE the
+  main circle — evenodd XORs the two disks, so any part of the cutout
+  that pokes outside the main circle gets FILLED too (an errant extra
+  lobe) instead of subtracted. The old values failed that containment
+  check by a wide margin (distance between centers ≈15.8, plus the
+  cutout's own radius 23, ≈38.8 total — well past the main circle's r28
+  boundary), which is exactly what rendered as a lopsided ring/bulge
+  instead of a moon. Fixed by choosing a cutout offset+radius that stays
+  fully contained (`circleSubpath(54,47,22)`, distance ≈5 + radius 22 =
+  well under 28) — verified visually against several candidate
+  parameter sets in a standalone prototype page before touching the real
+  component, since this kind of geometry is much faster to eyeball than
+  to reason through blind.
+- **Tree info icon "i" un-italicized** — `.tree-card-info-icon`'s
+  `font-style` changed from `italic` to `normal` (the mystical quote text
+  above it stays italic on purpose; only the icon itself changed).
+- **The account-sync poll was actually broken, found and fixed.**
+  `useAccountPoll.ts`'s non-incrementing `fetchCount` (used on load, so
+  viewing the poll doesn't itself count as a vote) throws on ANY non-2xx
+  response — but abacus.jasoncameron.dev's `/get/` endpoint returns a
+  plain 404 "Key not found" for a counter that has never been incremented
+  yet, which is completely normal for a brand-new poll (confirmed live via
+  curl: `/get/.../account-poll-cloud-no` 404'd while `/hit/` on the same
+  key created it and returned `{value:1}`). Since `Promise.all` rejects
+  the instant either counter's fetch throws, the poll landed in its
+  "couldn't reach the vote tally" error state on every load until BOTH
+  sides had been voted at least once. Fixed by treating a 404 specifically
+  as "zero votes so far" (`return 0`) in `readCounterValue`, rather than
+  as a hard failure — every other non-ok status still throws normally.
+
+Verified together: `npx tsc -b`, `npx vitest run` (100/100, unchanged —
+these are UI/CSS/glyph fixes with no new engine logic), `npm run build`,
+and a live Playwright pass: screenshotted the fixed hint-text/toggle
+spacing at a narrow (400px) viewport, measured the pendant→readout gap,
+screenshotted the medallion collection grid (confirmed the crescent-moon
+renders as a clean thin crescent with no bulge), read the info icon's
+computed `font-style` (`normal`), confirmed the poll renders its real
+question with no error state, and screenshotted the watering can
+mid-pour hovering over the tree with a droplet visible.
+
 ## Status update — spin wind-up/slowdown, fruit at every branch split, watering can + bonus fruit
 
 Four changes from one round of direct feedback on the Focus Garden and the

@@ -592,7 +592,19 @@ export function MedallionGlyph({ id, color }: { id: MedallionId; color: string }
         />
       );
     case 'crescent-moon':
-      return <path fillRule="evenodd" fill={color} d={`${circleSubpath(50, 50, 28)} ${circleSubpath(63, 41, 23)}`} />;
+      // The cutout circle must sit ENTIRELY INSIDE the main circle for this
+      // two-circle-plus-evenodd technique to produce a clean crescent —
+      // evenodd XORs the two disks, so any part of the cutout that pokes
+      // OUTSIDE the main circle gets filled too (an errant extra lobe),
+      // not subtracted. The previous values (main r28 @ (50,50), cutout
+      // r23 @ (63,41)) failed that containment check — distance between
+      // centers (≈15.8) + the cutout's own radius (23) is ≈38.8, well past
+      // the main circle's r28 boundary — which is exactly what rendered as
+      // a lopsided ring/bulge instead of a moon. This offset (distance ≈5)
+      // plus the cutout radius (22) sums to well under 28, so the cutout
+      // stays fully inside the main circle and the result is a genuine,
+      // properly centered crescent.
+      return <path fillRule="evenodd" fill={color} d={`${circleSubpath(50, 50, 28)} ${circleSubpath(54, 47, 22)}`} />;
     case 'sun':
       return (
         <>
@@ -608,13 +620,33 @@ export function MedallionGlyph({ id, color }: { id: MedallionId; color: string }
         </>
       );
     case 'lightbulb':
+      // Redrawn — the old version was a plain circle with a disconnected
+      // stray line floating above it (read as "a weird string," since it
+      // didn't actually touch the circle) and an empty interior (no
+      // filament). This draws a real tapered bulb-glass silhouette
+      // (rounded top narrowing into the neck, not just a circle), a
+      // genuine zigzag filament with two leads inside it, then the
+      // threaded screw base below.
       return (
         <>
-          <line x1={50} y1={12} x2={50} y2={20} stroke={color} strokeWidth={3} strokeLinecap="round" />
-          <circle cx={50} cy={44} r={22} fill="none" stroke={color} strokeWidth={4} />
-          <path d="M40 60 L60 60 L60 68 Q60 76 52 76 L48 76 Q40 76 40 68 Z" fill={color} />
-          <line x1={44} y1={82} x2={56} y2={82} stroke={color} strokeWidth={3} strokeLinecap="round" />
-          <line x1={46} y1={88} x2={54} y2={88} stroke={color} strokeWidth={3} strokeLinecap="round" />
+          <path
+            d="M50 18 C63 18 72 28 72 40 C72 49 66 56 60 61 L60 66 L40 66 L40 61 C34 56 28 49 28 40 C28 28 37 18 50 18 Z"
+            fill="none"
+            stroke={color}
+            strokeWidth={4}
+            strokeLinejoin="round"
+          />
+          <path
+            d="M43 66 L43 53 L50 46 L57 53 L57 66"
+            fill="none"
+            stroke={color}
+            strokeWidth={2.5}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+          <path d="M40 66 L60 66 L60 74 Q60 80 53 80 L47 80 Q40 80 40 74 Z" fill={color} />
+          <line x1={43} y1={84} x2={57} y2={84} stroke={color} strokeWidth={3} strokeLinecap="round" />
+          <line x1={45} y1={88} x2={55} y2={88} stroke={color} strokeWidth={3} strokeLinecap="round" />
         </>
       );
     case 'leaf':

@@ -52,6 +52,15 @@ function writeStoredVote(choice: PollChoice): void {
 }
 
 async function readCounterValue(res: Response): Promise<number> {
+  // abacus 404s a "get" on a key that has never been hit yet, rather than
+  // returning {value: 0} — a completely normal state for one side of a
+  // brand-new poll (e.g. nobody has voted "no" yet). Treating that as
+  // "zero votes so far" instead of a hard failure is what makes the poll
+  // actually load; the previous version threw on ANY non-ok status,
+  // including this expected one, which put the whole poll into its
+  // "couldn't reach the vote tally" error state every time either counter
+  // hadn't been hit even once.
+  if (res.status === 404) return 0;
   if (!res.ok) throw new Error(`poll request failed: ${res.status}`);
   const data: unknown = await res.json();
   const value = (data as { value?: unknown } | null)?.value;
