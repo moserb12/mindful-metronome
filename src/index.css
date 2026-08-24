@@ -350,21 +350,46 @@ select:hover {
 /* Ambient particles — a handful of small dots emerging from the eye's own
    center and flowing outward in all directions, tinted with the live
    --band-color. Purely decorative: no pointer-events, aria-hidden in the
-   markup. Position AND opacity are written directly (SVG attributes, not
-   CSS) every rAF frame by MetronomeVisual's swing-driven loop — genuinely
-   tied to the pendulum's real swing timing (a stepped "pulse then
-   freeze" per beat-segment, not a smooth independent clock), so there's
-   deliberately no CSS `animation` here. Critically, this file must NOT
-   set a static `opacity` on `.ambient-particles circle`: a CSS
-   declaration always wins over an SVG presentation attribute in the
-   cascade, so a plain `opacity: 0;` rule here would permanently override
-   every opacity the JS writes, making the particles invisible forever
-   regardless of what MetronomeVisual sets. */
+   markup. Two independent motion layers (see the doc comment on
+   AMBIENT_PARTICLES in MetronomeVisual.tsx for the full reasoning):
+     - Position (cx/cy) AND opacity are written directly as SVG
+       attributes every rAF frame while playing, by MetronomeVisual's
+       swing-driven loop — genuinely tied to the pendulum's real swing
+       timing (a stepped "pulse then freeze" per beat-segment), so
+       there's deliberately no CSS `animation` on either of THOSE.
+       Critically, this file must NOT set a static `opacity` (or `cx`/
+       `cy`) on `.ambient-particles circle`: a CSS declaration always
+       wins over an SVG presentation attribute in the cascade, so a
+       static rule here would permanently override whatever the JS
+       writes, regardless of play state.
+     - A small, ALWAYS-ON `transform` wiggle (ambient-particle-wiggle
+       below) runs regardless of play state — on load, between beats'
+       freeze windows, and while paused — since the JS-driven flow above
+       only runs while playing. `transform` is a completely separate
+       visual layer from the cx/cy attributes, so the two never fight:
+       this just nudges wherever cx/cy currently puts the particle. */
 .ambient-particles {
   pointer-events: none;
 }
 .ambient-particles circle {
   fill: var(--band-color, #a78bfa);
+  animation: ambient-particle-wiggle var(--wiggle-dur, 6s) ease-in-out infinite;
+  animation-delay: var(--wiggle-delay, 0s);
+}
+@keyframes ambient-particle-wiggle {
+  0%,
+  100% {
+    transform: translate(0, 0);
+  }
+  25% {
+    transform: translate(2px, -3px);
+  }
+  50% {
+    transform: translate(-2.5px, 1px);
+  }
+  75% {
+    transform: translate(1.5px, 2.5px);
+  }
 }
 
 /* Invisible geometry-only tap target — see the long comment on this

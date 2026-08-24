@@ -3,6 +3,68 @@
 This file is read automatically by Claude Code at the start of every session
 in this repo. Keep it up to date as decisions get made.
 
+## Status update — particles get a persistent idle presence: visible on load, stay (and bob) through pause
+
+A direct follow-up on the beat-synced particle rebuild above: the
+builder didn't like that particles snapped to invisible whenever the
+pendulum wasn't actively swinging — nothing on first load, nothing while
+paused, and dead-still between beats' freeze windows during playback.
+Wanted instead: a small ambient bob/sway always running, and particles
+that stay put (don't vanish) when paused.
+
+**Two independent motion layers now, not one** (see the doc comment on
+`AMBIENT_PARTICLES` in `MetronomeVisual.tsx`):
+- The beat-synced outward FLOW from the previous pass is UNCHANGED —
+  still only runs while playing, still pulses-then-freezes tied to
+  `computeSwingSegment`.
+- A new small, ALWAYS-ON CSS `transform` wiggle
+  (`ambient-particle-wiggle` in `index.css`) runs regardless of play
+  state — a few px of gentle multi-directional drift, staggered per
+  particle via `--wiggle-dur`/`--wiggle-delay`. Deliberately plain CSS,
+  not folded into the rAF loop: that loop only runs while playing
+  (pausing runs a separate settle-tail effect instead), so a JS-only
+  wiggle would still go dead on pause — exactly the complaint. `transform`
+  is a fully separate visual layer from the `cx`/`cy` SVG attributes the
+  JS writes, so the two never fight; the wiggle just nudges wherever the
+  flow currently puts a particle.
+
+**Each particle now has a real resting state**, not just an invisible
+fallback: a small `restRadius` (16-42 SVG units) along its own flow
+`angle`, computed once via a shared `particleRestPoint()` helper so the
+initial JSX render, `snapToRest()` (called after the settle-tail, i.e.
+whenever paused), and the flow formula's own starting point all agree
+exactly. Concretely:
+- **On load**, before Play is ever pressed, particles render AT this
+  resting point with `PARTICLE_REST_OPACITY` (0.4) — genuinely visible
+  from first paint, not a `cx=EYE, opacity=0` placeholder waiting for JS.
+- **The flow formula now grows FROM `restRadius`**, not from the eye's
+  exact center (`radius = restRadius + progress * (PARTICLE_MAX_RADIUS *
+  radiusMul - restRadius)`) — pressing Play continues smoothly outward
+  from wherever a particle was idling, instead of teleporting inward
+  first. Opacity now breathes UP from `PARTICLE_REST_OPACITY` and back
+  DOWN to it (never to 0), so a mid-flow particle never looks like it
+  vanished, and the same floor doubles as the idle resting opacity —
+  crossing between "flowing" and "resting" never pops.
+- **`snapToRest()` now returns each particle to `particleRestPoint()`**
+  (own resting radius, `PARTICLE_REST_OPACITY`) instead of parking it
+  invisibly at the eye's exact center — pausing mid-flow settles back to
+  a calm resting orbit rather than disappearing.
+
+⚠️ index.css's existing warning about never setting a static `opacity`
+on `.ambient-particles circle` (a CSS declaration beats an SVG
+presentation attribute in the cascade, permanently overriding whatever
+JS sets) now also covers `cx`/`cy` — same trap, same fix: only `fill`
+and the wiggle `animation` are static CSS here.
+
+Verified live via Playwright: on load, all 9 particles read a real
+resting distance (18-41 units) and opacity 0.4 (not 0); the wiggle's
+computed `transform` genuinely differed across two samples 1.5s apart,
+both on load AND while paused; mid-play (2.5s in) distances had grown to
+46-134 units with opacity breathing up to ~0.5-0.75; and pausing
+returned every particle to the EXACT same resting values it started
+with. `npx tsc -b`, `npx vitest run` (100/100, unchanged), `npm run
+build` all stayed green.
+
 ## Status update — ambient particles rebuilt: emerge from the eye, genuinely beat-synced pulse-then-freeze
 
 A follow-up on the particle work above, after direct feedback that the

@@ -79,24 +79,33 @@ const EYE = { x: 200, y: 224 };
 
 /** A handful of ambient particles emerging from the eye's own center and
  * flowing outward in all directions — purely decorative (aria-hidden,
- * pointer-events: none), tinted with the live `--band-color`. Unlike
- * every other per-frame value in this file, their motion isn't computed
- * from a smooth time-based formula: it's stepped, driven directly by
- * computeSwingSegment's own beat-index (see the rAF loop below) so each
- * particle visibly PULSES outward right as the pendulum leaves one side,
- * then FREEZES in place for the rest of that swing — "loosely tied to
- * the speed of the pendulum," per the builder's own framing, rather than
- * an independent decorative clock. That also fixes an earlier version
- * (a fixed real-seconds duration divided by a per-band multiplier) where
- * slow bands like delta ended up moving so little per frame the drift
- * was imperceptible — a discrete per-beat jump is visible regardless of
- * how far apart in real time those beats land.
+ * pointer-events: none), tinted with the live `--band-color`. TWO
+ * independent motion layers, deliberately not one:
+ *   - The outward FLOW only runs while playing: driven directly by
+ *     computeSwingSegment's own beat-index (see the rAF loop below) so
+ *     each particle visibly PULSES outward right as the pendulum leaves
+ *     one side, then FREEZES in place for the rest of that swing —
+ *     "loosely tied to the speed of the pendulum," per the builder's own
+ *     framing, rather than an independent decorative clock. That also
+ *     fixes an earlier version (a fixed real-seconds duration divided by
+ *     a per-band multiplier) where slow bands like delta ended up moving
+ *     so little per frame the drift was imperceptible — a discrete
+ *     per-beat jump is visible regardless of how far apart in real time
+ *     those beats land.
+ *   - A small, ALWAYS-ON idle wiggle (plain CSS, see index.css) runs
+ *     regardless of play state — on first load, between beats' freeze
+ *     windows, and while paused. The rAF-driven flow above only runs
+ *     while playing (pausing runs a separate settle-tail instead), so
+ *     without this second layer particles went fully still and invisible
+ *     whenever the pendulum wasn't actively swinging — the CSS wiggle is
+ *     what keeps them visibly, gently alive the rest of the time.
  *
- * Static per-particle data (angle/stepOffset/radiusMul/r) is computed
- * ONCE at module load, same "stable across re-renders of one mounted
- * instance, not byte-identical across mounts" reasoning as the fractal
- * tree's own branch jitter (see engine/fractalTree.ts's seededRandom doc
- * comment) — a plain one-time Math.random() here is enough. */
+ * Static per-particle data (angle/stepOffset/radiusMul/r/restRadius/
+ * wiggle timing) is computed ONCE at module load, same "stable across
+ * re-renders of one mounted instance, not byte-identical across mounts"
+ * reasoning as the fractal tree's own branch jitter (see
+ * engine/fractalTree.ts's seededRandom doc comment) — a plain one-time
+ * Math.random() here is enough. */
 interface AmbientParticle {
   /** Fixed outward direction, in radians — this particle always flows
    * the same way each time its journey resets, radiating in all
@@ -113,10 +122,26 @@ interface AmbientParticle {
    * variety in how far out each one travels before resetting. */
   radiusMul: number;
   r: number;
+  /** Small fixed idle radius (SVG units from EYE) this particle sits at
+   * whenever it ISN'T actively flowing — on first load, and while
+   * paused. Along the SAME `angle` as its flow direction, so resting and
+   * flowing are one continuous line rather than two unrelated states:
+   * flowing starts from here (not from the eye's exact center) and
+   * pausing returns here (not to invisibility). */
+  restRadius: number;
+  /** CSS-driven idle wiggle timing (see .ambient-particles circle's
+   * `animation` in index.css) — a small, ALWAYS-ON bob/sway layered on
+   * top of whatever cx/cy JS sets, independent of play state entirely.
+   * This is deliberately real CSS, not part of the swing-driven rAF loop
+   * below: that loop only runs while playing, so a JS-only wiggle would
+   * go still the instant the pendulum stops — exactly the "does nothing
+   * when idle" complaint this exists to fix. */
+  wiggleDurSec: number;
+  wiggleDelaySec: number;
 }
 const AMBIENT_PARTICLE_COUNT = 9;
 /** How many beat-segments (half-swings) a particle's full outward journey
- * takes before it resets back to the center and starts over. */
+ * takes before it resets back to its resting radius and starts over. */
 const PARTICLE_MAX_STEPS = 12;
 /** How far out (SVG units from EYE) a particle travels at the end of its
  * journey, before the per-particle radiusMul jitter — well past the
@@ -125,14 +150,31 @@ const PARTICLE_MAX_STEPS = 12;
 const PARTICLE_MAX_RADIUS = 170;
 /** Fraction of each beat-segment spent actually rising (the "pulse") —
  * the remainder is the "freeze": the particle just holds at its new
- * radius until the next beat's pulse. */
+ * radius until the next beat's pulse (modulo the small always-on CSS
+ * wiggle layered on top of everything). */
 const PARTICLE_PULSE_FRACTION = 0.3;
+/** Shared resting/floor opacity — what a particle shows at on first
+ * load, what it settles back to on pause, and the floor its own flow
+ * curve breathes up from and back down to while playing. Kept as ONE
+ * constant so there's never a visible opacity pop crossing between
+ * "resting" and "flowing" states. */
+const PARTICLE_REST_OPACITY = 0.4;
 const AMBIENT_PARTICLES: AmbientParticle[] = Array.from({ length: AMBIENT_PARTICLE_COUNT }, () => ({
   angle: Math.random() * Math.PI * 2,
   stepOffset: Math.floor(Math.random() * PARTICLE_MAX_STEPS),
   radiusMul: 0.75 + Math.random() * 0.5,
   r: 1 + Math.random() * 1.8,
+  restRadius: 16 + Math.random() * 26,
+  wiggleDurSec: 4 + Math.random() * 4,
+  wiggleDelaySec: -Math.random() * 8,
 }));
+
+/** Where a particle sits whenever it isn't actively flowing — on first
+ * mount and whenever paused. Shared by the initial JSX render and
+ * snapToRest() below so both agree exactly. */
+function particleRestPoint(p: AmbientParticle): { x: number; y: number } {
+  return { x: EYE.x + Math.cos(p.angle) * p.restRadius, y: EYE.y + Math.sin(p.angle) * p.restRadius };
+}
 
 /**
  * Degrees to feed the arm's `rotate(deg, cx, cy)` SVG transform so that a
@@ -857,17 +899,21 @@ export function MetronomeVisual({
       pupilRef.current.setAttribute('cx', String(EYE.x));
       pupilRef.current.setAttribute('cy', String(EYE.y));
     }
-    // Particles are entirely driven by the pendulum's real swing (see the
+    // The outward FLOW is driven by the pendulum's real swing (see the
     // rAF loop below) — with no swing running while at rest, nothing
-    // would otherwise reset them, so they'd stay frozen wherever they
-    // happened to be mid-flow the moment playback stopped. Parking them
-    // invisibly at the eye's own center is also their genuine starting
-    // state for the next Play press.
-    for (const el of particleRefs.current) {
+    // would otherwise stop it, so particles would stay frozen mid-flow
+    // the moment playback stopped instead of settling back down. This
+    // returns each one to its own small resting point (not the eye's
+    // exact center, and not invisible) — the CSS wiggle in index.css
+    // keeps gently bobbing them there regardless of play state, so they
+    // read as "still here, idling" rather than vanishing.
+    for (let i = 0; i < AMBIENT_PARTICLES.length; i++) {
+      const el = particleRefs.current[i];
       if (!el) continue;
-      el.setAttribute('cx', String(EYE.x));
-      el.setAttribute('cy', String(EYE.y));
-      el.setAttribute('opacity', '0');
+      const rest = particleRestPoint(AMBIENT_PARTICLES[i]);
+      el.setAttribute('cx', String(rest.x));
+      el.setAttribute('cy', String(rest.y));
+      el.setAttribute('opacity', String(PARTICLE_REST_OPACITY));
     }
     lastAngleRef.current = 0;
     lastWaveAmplitudeRef.current = 0;
@@ -1011,15 +1057,17 @@ export function MetronomeVisual({
           const p = AMBIENT_PARTICLES[i];
           const stepIndex = (((beatIndex + p.stepOffset) % PARTICLE_MAX_STEPS) + PARTICLE_MAX_STEPS) % PARTICLE_MAX_STEPS;
           const progress = (stepIndex + pulseEased) / PARTICLE_MAX_STEPS;
-          const radius = progress * PARTICLE_MAX_RADIUS * p.radiusMul;
+          // Grows from this particle's own resting radius, not from the
+          // eye's exact center — flowing continues smoothly from wherever
+          // it was idling rather than teleporting inward first.
+          const radius = p.restRadius + progress * (PARTICLE_MAX_RADIUS * p.radiusMul - p.restRadius);
           const x = EYE.x + Math.cos(p.angle) * radius;
           const y = EYE.y + Math.sin(p.angle) * radius;
-          // Fades in leaving the center, out approaching the reset —
-          // conveniently, this also means the radius snapping back to 0
-          // at the wrap from stepIndex MAX-1 back to 0 happens exactly
-          // when opacity has already faded to ~0, so the reset itself is
-          // never visible as a jump.
-          const opacity = Math.max(0, Math.sin(Math.min(1, progress) * Math.PI)) * 0.6;
+          // Breathes UP from the shared resting opacity as it leaves,
+          // back DOWN to it approaching the wrap — never fades to
+          // nothing, so there's no visible "reset" jump AND no moment
+          // where a mid-flow particle looks like it vanished.
+          const opacity = PARTICLE_REST_OPACITY + Math.max(0, Math.sin(Math.min(1, progress) * Math.PI)) * 0.35;
           el.setAttribute('cx', String(x));
           el.setAttribute('cy', String(y));
           el.setAttribute('opacity', String(opacity));
@@ -1292,24 +1340,31 @@ export function MetronomeVisual({
         aria-label="Mindful Metronome visual"
       >
         {/* Ambient particles — rendered first so they sit BEHIND everything
-            else (pyramid, eye, pendulum). Purely decorative. Positioned
-            imperatively every frame by the rAF loop above (see
-            particleRefs) — cx/cy/opacity here are just the pre-JS/at-rest
-            fallback (parked at the eye's own center, invisible), the same
-            role EYE.x/EYE.y play for pupilRef below. */}
+            else (pyramid, eye, pendulum). Purely decorative. The FLOW
+            (radius/opacity while playing) is positioned imperatively
+            every frame by the rAF loop above (see particleRefs); cx/cy/
+            opacity here are each particle's own resting point/opacity —
+            genuinely visible from first paint, not an invisible fallback
+            waiting for JS, so there's something to see before Play is
+            ever pressed. The always-on CSS wiggle (index.css) applies
+            regardless of any of this. */}
         <g className="ambient-particles" aria-hidden="true">
-          {AMBIENT_PARTICLES.map((p, i) => (
-            <circle
-              key={i}
-              ref={(el) => {
-                particleRefs.current[i] = el;
-              }}
-              cx={EYE.x}
-              cy={EYE.y}
-              r={p.r}
-              opacity={0}
-            />
-          ))}
+          {AMBIENT_PARTICLES.map((p, i) => {
+            const rest = particleRestPoint(p);
+            return (
+              <circle
+                key={i}
+                ref={(el) => {
+                  particleRefs.current[i] = el;
+                }}
+                cx={rest.x}
+                cy={rest.y}
+                r={p.r}
+                opacity={PARTICLE_REST_OPACITY}
+                style={{ '--wiggle-dur': `${p.wiggleDurSec}s`, '--wiggle-delay': `${p.wiggleDelaySec}s` } as React.CSSProperties}
+              />
+            );
+          })}
         </g>
 
         {/* All four pyramid paths (the invisible hit-target plus the three
