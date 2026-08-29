@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Analytics } from '@vercel/analytics/react';
 import { useMetronomeEngine } from './hooks/useMetronomeEngine';
 import { useCustomPresets } from './hooks/useCustomPresets';
 import { useFocusStats } from './hooks/useFocusStats';
@@ -208,6 +209,7 @@ export default function App() {
       )}
 
       {!focusMode && <BilateralComingSoonBanner />}
+      <Analytics />
     </div>
   );
 }
