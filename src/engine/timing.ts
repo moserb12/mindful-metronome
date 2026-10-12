@@ -45,6 +45,15 @@ export const SCHEDULER_TICK_MS = 25;
  * (like the metronome arm) know a beat is coming before it happens. */
 export const LOOKAHEAD_WINDOW_SEC = 0.1;
 
+/** A timer that wakes after its next beat is already in the past must skip
+ * that beat instead of constructing an oscillator with a past start time.
+ * Chrome otherwise plays every overdue oscillator immediately, producing
+ * the short burst heard when Android briefly wakes a frozen page. */
+export function computeMissedBeatCount(nextBeatTimeSec: number, nowSec: number, secondsPerBeat: number): number {
+  if (nextBeatTimeSec >= nowSec || secondsPerBeat <= 0) return 0;
+  return Math.ceil((nowSec - nextBeatTimeSec) / secondsPerBeat);
+}
+
 /**
  * A Web Audio lookahead beat scheduler. Wakes up every `SCHEDULER_TICK_MS`
  * and schedules any beat that falls within `lookaheadSec` of "now" via
@@ -64,17 +73,20 @@ export class BeatScheduler {
   private bpm: number;
   private onBeatScheduled: (beat: ScheduledBeat) => void;
   private lookaheadSec: number;
+  private onMissedBeats?: (count: number) => void;
 
   constructor(
     getCurrentTimeSec: () => number,
     bpm: number,
     onBeatScheduled: (beat: ScheduledBeat) => void,
-    lookaheadSec: number = LOOKAHEAD_WINDOW_SEC
+    lookaheadSec: number = LOOKAHEAD_WINDOW_SEC,
+    onMissedBeats?: (count: number) => void
   ) {
     this.getCurrentTimeSec = getCurrentTimeSec;
     this.bpm = bpm;
     this.onBeatScheduled = onBeatScheduled;
     this.lookaheadSec = lookaheadSec;
+    this.onMissedBeats = onMissedBeats;
   }
 
   /** Change the tempo. Takes effect on the NEXT beat scheduled after the
@@ -122,7 +134,15 @@ export class BeatScheduler {
    * Public so tests can call it directly against a fake clock. */
   tick(): void {
     if (!this.running) return;
-    const horizon = this.getCurrentTimeSec() + this.lookaheadSec;
+    const nowSec = this.getCurrentTimeSec();
+    const missedBeatCount = computeMissedBeatCount(this.nextBeatTimeSec, nowSec, this.secondsPerBeat);
+    if (missedBeatCount > 0) {
+      this.nextBeatIndex += missedBeatCount;
+      this.nextBeatTimeSec += missedBeatCount * this.secondsPerBeat;
+      this.onMissedBeats?.(missedBeatCount);
+    }
+
+    const horizon = nowSec + this.lookaheadSec;
     while (this.nextBeatTimeSec <= horizon) {
       this.onBeatScheduled({ beatIndex: this.nextBeatIndex, timeSec: this.nextBeatTimeSec });
       this.nextBeatIndex += 1;

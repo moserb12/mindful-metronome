@@ -11,6 +11,7 @@ import {
 import { classifyBeatFrequency, DEFAULT_PRESET, MAX_BPM, MIN_BPM } from '../data/bands';
 import { MOOD_BY_BAND } from '../data/moods';
 import { clamp } from '../engine/motion';
+import { recordAudioDiagnostic } from '../audio/audioDiagnostics';
 import { loadSettings, saveSettings } from '../storage/settingsStorage';
 import { decodeSettingsFromSearchParams, encodeSettingsToSearchParams, hasAnyCoreTuningParams } from '../urlState';
 
@@ -32,7 +33,7 @@ const FOREGROUND_LOOKAHEAD_SEC = 0.2;
  * background tab isn't where anyone's actively tweaking Sound
  * effect/Beat pattern anyway, so the latency tradeoff only applies when
  * it can't be felt. */
-const BACKGROUND_SAFE_LOOKAHEAD_SEC = 3;
+const BACKGROUND_SAFE_LOOKAHEAD_SEC = 30;
 
 /** Debounce window for saving settings to localStorage — range inputs fire
  * `onChange` continuously while being dragged, so saving on every change
@@ -262,7 +263,9 @@ export function useMetronomeEngine() {
 
   const engineRef = useRef<BinauralEngine | null>(null);
   const schedulerRef = useRef<BeatScheduler | null>(null);
-  const visibilityListenerRef = useRef<(() => void) | null>(null);
+  const lifecycleCleanupRef = useRef<(() => void) | null>(null);
+  const recoveryInFlightRef = useRef<Promise<boolean> | null>(null);
+  const isPlayingIntentRef = useRef(false);
   const swingRef = useRef<SwingState | null>(null);
   const sessionRef = useRef<SessionState | null>(null);
   const sessionPollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -465,12 +468,11 @@ export function useMetronomeEngine() {
    * within pollSession's memoized callback) behaves identically to a
    * fresh one. */
   function stopPlaybackInternal() {
+    isPlayingIntentRef.current = false;
     schedulerRef.current?.stop();
     schedulerRef.current = null;
-    if (visibilityListenerRef.current) {
-      document.removeEventListener('visibilitychange', visibilityListenerRef.current);
-      visibilityListenerRef.current = null;
-    }
+    lifecycleCleanupRef.current?.();
+    lifecycleCleanupRef.current = null;
     engineRef.current?.stop();
     if (endTickTimeoutRef.current) clearTimeout(endTickTimeoutRef.current);
     if (centerTickTimeoutRef.current) clearTimeout(centerTickTimeoutRef.current);
@@ -534,9 +536,37 @@ export function useMetronomeEngine() {
     }
   }, []);
 
+  /** Best-effort recovery after Android unfreezes the page or returns audio
+   * focus. The media element and AudioContext are resumed together; once
+   * the audio clock is moving again, BeatScheduler.tick() repairs its queue
+   * while skipping any beats that elapsed during the freeze. */
+  function recoverPlayback(trigger: string) {
+    const engine = engineRef.current;
+    if (!engine || !isPlayingIntentRef.current || recoveryInFlightRef.current) return;
+
+    recordAudioDiagnostic('lifecycle-recovery-start', {
+      trigger,
+      contextState: engine.context.state,
+      hidden: document.hidden,
+    });
+    const recovery = engine.resume();
+    recoveryInFlightRef.current = recovery;
+    void recovery.then((succeeded) => {
+      recordAudioDiagnostic('lifecycle-recovery-finish', {
+        trigger,
+        succeeded,
+        contextState: engine.context.state,
+      });
+      schedulerRef.current?.tick();
+      if (sessionRef.current) pollSession();
+    }).finally(() => {
+      if (recoveryInFlightRef.current === recovery) recoveryInFlightRef.current = null;
+    });
+  }
+
   const start = useCallback(() => {
     const engine = ensureEngine();
-    if (engine.context.state === 'suspended') void engine.context.resume();
+    isPlayingIntentRef.current = true;
     engine.start();
 
     const firstBeatAtSec = engine.context.currentTime + 0.15;
@@ -562,16 +592,49 @@ export function useMetronomeEngine() {
       () => engine.context.currentTime,
       paramsRef.current.bpm,
       handleBeatScheduled,
-      document.hidden ? BACKGROUND_SAFE_LOOKAHEAD_SEC : FOREGROUND_LOOKAHEAD_SEC
+      document.hidden ? BACKGROUND_SAFE_LOOKAHEAD_SEC : FOREGROUND_LOOKAHEAD_SEC,
+      (count) => recordAudioDiagnostic('scheduler-skipped-overdue-beats', { count })
     );
     schedulerRef.current = scheduler;
     scheduler.start(firstBeatAtSec);
 
     function handleVisibilityChange() {
       scheduler.setLookaheadSec(document.hidden ? BACKGROUND_SAFE_LOOKAHEAD_SEC : FOREGROUND_LOOKAHEAD_SEC);
+      recordAudioDiagnostic('document-visibility', { hidden: document.hidden });
+      if (document.hidden) scheduler.tick();
+      else recoverPlayback('visibilitychange');
+    }
+    function handleFreeze() {
+      recordAudioDiagnostic('document-freeze', { contextState: engine.context.state });
+    }
+    function handleResume() {
+      recoverPlayback('document-resume');
+    }
+    function handlePageShow(event: PageTransitionEvent) {
+      recordAudioDiagnostic('page-show', { persisted: event.persisted });
+      recoverPlayback('pageshow');
+    }
+    function handlePageHide(event: PageTransitionEvent) {
+      recordAudioDiagnostic('page-hide', { persisted: event.persisted });
+    }
+    function handleContextStateChange() {
+      if (engine.context.state === 'running') scheduler.tick();
+      else if (engine.context.state !== 'closed') recoverPlayback('audio-context-statechange');
     }
     document.addEventListener('visibilitychange', handleVisibilityChange);
-    visibilityListenerRef.current = handleVisibilityChange;
+    document.addEventListener('freeze', handleFreeze);
+    document.addEventListener('resume', handleResume);
+    window.addEventListener('pageshow', handlePageShow);
+    window.addEventListener('pagehide', handlePageHide);
+    engine.context.addEventListener('statechange', handleContextStateChange);
+    lifecycleCleanupRef.current = () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      document.removeEventListener('freeze', handleFreeze);
+      document.removeEventListener('resume', handleResume);
+      window.removeEventListener('pageshow', handlePageShow);
+      window.removeEventListener('pagehide', handlePageHide);
+      engine.context.removeEventListener('statechange', handleContextStateChange);
+    };
 
     // Arm (or leave disarmed) this playthrough's session timer. Cancels
     // any stale grace-timeout from a PREVIOUS session that just ended —
@@ -599,6 +662,47 @@ export function useMetronomeEngine() {
   const toggle = useCallback(() => {
     if (isPlaying) stop();
     else start();
+  }, [isPlaying, start, stop]);
+
+  useEffect(() => {
+    if (!('mediaSession' in navigator)) return;
+
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: 'Mindful Metronome',
+      artist: 'BBM',
+      album: 'Binaural sleep and focus session',
+      artwork: [
+        { src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' },
+        { src: '/icons/icon-512.png', sizes: '512x512', type: 'image/png' },
+      ],
+    });
+    navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
+
+    const handlers: Array<[MediaSessionAction, MediaSessionActionHandler | null]> = [
+      ['play', () => {
+        if (isPlayingIntentRef.current) recoverPlayback('media-session-play');
+        else start();
+      }],
+      ['pause', stop],
+      ['stop', stop],
+    ];
+    handlers.forEach(([action, handler]) => {
+      try {
+        navigator.mediaSession.setActionHandler(action, handler);
+      } catch {
+        // Older browsers expose Media Session but not every action.
+      }
+    });
+
+    return () => {
+      handlers.forEach(([action]) => {
+        try {
+          navigator.mediaSession.setActionHandler(action, null);
+        } catch {
+          // See registration guard above.
+        }
+      });
+    };
   }, [isPlaying, start, stop]);
 
   /** Picking a new duration (or Open-ended) is just a PREFERENCE while
@@ -824,10 +928,8 @@ export function useMetronomeEngine() {
   useEffect(() => {
     return () => {
       schedulerRef.current?.stop();
-      if (visibilityListenerRef.current) {
-        document.removeEventListener('visibilitychange', visibilityListenerRef.current);
-        visibilityListenerRef.current = null;
-      }
+      lifecycleCleanupRef.current?.();
+      lifecycleCleanupRef.current = null;
       engineRef.current?.close();
       if (endTickTimeoutRef.current) clearTimeout(endTickTimeoutRef.current);
       if (centerTickTimeoutRef.current) clearTimeout(centerTickTimeoutRef.current);

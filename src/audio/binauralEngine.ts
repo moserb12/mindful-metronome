@@ -12,8 +12,8 @@
 //     This is the "flow state" background layer. The LEFT and RIGHT
 //     oscillators are each panned hard to their own ear permanently — that
 //     fixed separation is what makes the beat perceivable at all — but
-//     each has its OWN gain, continuously re-balanced every animation frame
-//     to follow the pendulum's live position (see updateDroneBalance()).
+//     each has its OWN gain, with native automation curves scheduled ahead
+//     to follow the pendulum's live position (see scheduleDroneSwing()).
 //     The two gains always sum to `droneVolume`, so the total loudness
 //     stays constant; only the LR balance moves.
 //   - TICK: short, percussive ticks fired once per beat by a BeatScheduler
@@ -40,6 +40,7 @@
 // ============================================================================
 
 import { pendulumEase } from '../engine/motion';
+import { recordAudioDiagnostic } from './audioDiagnostics';
 
 export type TickSound = 'soft' | 'wood' | 'kick' | 'hihat';
 
@@ -123,7 +124,7 @@ export interface MetronomeParams {
   tickSound: TickSound;
   /** 0 = drone always split 50/50 regardless of pendulum position
    * (modulation off). 1 = full swing, 100/0 at one extreme to 0/100 at the
-   * other. 0.6 lands on an 80/20 <-> 20/80 swing. See updateDroneBalance(). */
+   * other. 0.6 lands on an 80/20 <-> 20/80 swing. See scheduleDroneSwing(). */
   panModulationDepth: number;
   tickEarMode: TickEarMode;
 }
@@ -140,7 +141,7 @@ function clampPan(v: number): number {
  * same filter cascade used by countless Web Audio noise generators). Pink
  * noise, unlike white, has equal energy per octave, which reads as much
  * softer/warmer texture to the ear. */
-function buildPinkNoiseBuffer(context: AudioContext, seconds = 2): AudioBuffer {
+function buildPinkNoiseBuffer(context: AudioContext, seconds = 8): AudioBuffer {
   const bufferSize = context.sampleRate * seconds;
   const buffer = context.createBuffer(1, bufferSize, context.sampleRate);
   const output = buffer.getChannelData(0);
@@ -171,7 +172,7 @@ function buildPinkNoiseBuffer(context: AudioContext, seconds = 2): AudioBuffer {
  * chosen by matching RMS against buildPinkNoiseBuffer's output (both land
  * within ~1% of each other), not eyeballed — so switching shield type
  * mid-session doesn't jump in perceived loudness. */
-function buildWhiteNoiseBuffer(context: AudioContext, seconds = 2): AudioBuffer {
+function buildWhiteNoiseBuffer(context: AudioContext, seconds = 8): AudioBuffer {
   const bufferSize = context.sampleRate * seconds;
   const buffer = context.createBuffer(1, bufferSize, context.sampleRate);
   const output = buffer.getChannelData(0);
@@ -186,7 +187,7 @@ function buildWhiteNoiseBuffer(context: AudioContext, seconds = 2): AudioBuffer 
  * distant rumble. `leak`/`scale` were tuned together (same RMS-matching
  * process as buildWhiteNoiseBuffer) so this lands at the same loudness as
  * pink and white despite the very different generation method. */
-function buildBrownNoiseBuffer(context: AudioContext, seconds = 2): AudioBuffer {
+function buildBrownNoiseBuffer(context: AudioContext, seconds = 8): AudioBuffer {
   const bufferSize = context.sampleRate * seconds;
   const buffer = context.createBuffer(1, bufferSize, context.sampleRate);
   const output = buffer.getChannelData(0);
@@ -201,13 +202,50 @@ function buildBrownNoiseBuffer(context: AudioContext, seconds = 2): AudioBuffer 
   return buffer;
 }
 
+/** Encode a generated mono AudioBuffer as an ordinary WAV media resource.
+ * Chrome on Android grants media focus to a playing HTMLMediaElement, but
+ * not to a graph made only from Web Audio nodes. The noise/ambiance layer
+ * therefore enters the graph through a real looping <audio> element. */
+function audioBufferToWavBlob(buffer: AudioBuffer): Blob {
+  const samples = buffer.getChannelData(0);
+  const bytesPerSample = 2;
+  const dataLength = samples.length * bytesPerSample;
+  const wav = new ArrayBuffer(44 + dataLength);
+  const view = new DataView(wav);
+
+  const writeAscii = (offset: number, value: string) => {
+    for (let i = 0; i < value.length; i++) view.setUint8(offset + i, value.charCodeAt(i));
+  };
+
+  writeAscii(0, 'RIFF');
+  view.setUint32(4, 36 + dataLength, true);
+  writeAscii(8, 'WAVE');
+  writeAscii(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true); // PCM
+  view.setUint16(22, 1, true); // mono
+  view.setUint32(24, buffer.sampleRate, true);
+  view.setUint32(28, buffer.sampleRate * bytesPerSample, true);
+  view.setUint16(32, bytesPerSample, true);
+  view.setUint16(34, 16, true);
+  writeAscii(36, 'data');
+  view.setUint32(40, dataLength, true);
+
+  for (let i = 0; i < samples.length; i++) {
+    const sample = Math.max(-1, Math.min(1, samples[i]));
+    view.setInt16(44 + i * bytesPerSample, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
+  }
+
+  return new Blob([wav], { type: 'audio/wav' });
+}
+
 /** Generates 8 seconds of "rainy forest" ambiance: a pink-noise bed (the
  * same Paul Kellet cascade as buildPinkNoiseBuffer, scaled down to ~40%
  * since it's a bed under the droplets, not the whole texture) plus
  * layered droplet transients timed by a Poisson process — each a short
  * decaying noise burst softened through a one-pole lowpass into a "plip"
- * rather than a click. 8 seconds (vs. the stationary three's 2s) so the
- * transient-based loop seam is imperceptible. */
+ * rather than a click. The longer loop makes its transient-based seam
+ * imperceptible and meets Android media-session duration requirements. */
 function buildRainyForestBuffer(context: AudioContext, seconds = 8): AudioBuffer {
   const bufferSize = context.sampleRate * seconds;
   const buffer = context.createBuffer(1, bufferSize, context.sampleRate);
@@ -332,8 +370,9 @@ export class BinauralEngine {
 
   private oscLeft: OscillatorNode | null = null;
   private oscRight: OscillatorNode | null = null;
-  private noiseSource: AudioBufferSourceNode | null = null;
-  private readonly noiseBuffers: Record<NoiseType, AudioBuffer>;
+  private readonly noiseElement: HTMLAudioElement;
+  private readonly noiseUrls: Record<NoiseType, string>;
+  private mediaElementPauseTimer: ReturnType<typeof setTimeout> | null = null;
 
   /** Per-ear drone gain, so the L/R balance can move independently of the
    * master droneVolume. Their values always sum to droneVolume. */
@@ -351,7 +390,7 @@ export class BinauralEngine {
   /** Most recent pendulum position, -1 (full left) to 1 (full right).
    * Retained so setVolumes()/setPanModulationDepth() can immediately
    * reapply the correct balance without waiting for the next animation
-   * frame's updateDroneBalance() call. */
+   * next scheduled automation curve. */
   private lastPanValue = 0;
 
   constructor(initialParams: MetronomeParams) {
@@ -382,7 +421,7 @@ export class BinauralEngine {
     this.noiseGain.gain.value = initialParams.noiseVolume;
     this.noiseGain.connect(this.analyser);
 
-    this.noiseBuffers = {
+    const noiseBuffers: Record<NoiseType, AudioBuffer> = {
       pink: buildPinkNoiseBuffer(this.context),
       white: buildWhiteNoiseBuffer(this.context),
       brown: buildBrownNoiseBuffer(this.context),
@@ -390,6 +429,24 @@ export class BinauralEngine {
       tinRoof: buildTinRoofBuffer(this.context),
       drippyCavern: buildDrippyCavernBuffer(this.context),
     };
+
+    this.noiseUrls = Object.fromEntries(
+      Object.entries(noiseBuffers).map(([type, buffer]) => [type, URL.createObjectURL(audioBufferToWavBlob(buffer))])
+    ) as Record<NoiseType, string>;
+    this.noiseElement = new Audio(this.noiseUrls[initialParams.noiseType]);
+    this.noiseElement.loop = true;
+    this.noiseElement.preload = 'auto';
+    this.noiseElement.title = 'Mindful Metronome';
+    this.context.createMediaElementSource(this.noiseElement).connect(this.noiseGain);
+
+    this.context.addEventListener('statechange', () => {
+      recordAudioDiagnostic('audio-context-state', { state: this.context.state, playing: this.playing });
+    });
+    this.noiseElement.addEventListener('play', () => recordAudioDiagnostic('media-element-play'));
+    this.noiseElement.addEventListener('pause', () => recordAudioDiagnostic('media-element-pause'));
+    this.noiseElement.addEventListener('error', () => {
+      recordAudioDiagnostic('media-element-error', { code: this.noiseElement.error?.code ?? null });
+    });
   }
 
   get isPlaying(): boolean {
@@ -403,6 +460,19 @@ export class BinauralEngine {
   start(): void {
     if (this.playing) return;
     this.playing = true;
+    if (this.mediaElementPauseTimer) {
+      clearTimeout(this.mediaElementPauseTimer);
+      this.mediaElementPauseTimer = null;
+    }
+
+    // stop() fades these persistent gain nodes to zero. They survive across
+    // playthroughs, so every fresh start must restore the mix before the
+    // new sources begin (including a rapid stop/start during the 30ms fade).
+    const now = this.context.currentTime;
+    [this.droneGainLeft, this.droneGainRight, this.noiseGain].forEach((gainNode) => {
+      gainNode.gain.cancelScheduledValues(now);
+    });
+    this.noiseGain.gain.setValueAtTime(clamp01(this.params.noiseVolume), now);
 
     this.oscLeft = this.context.createOscillator();
     this.oscLeft.type = 'sine';
@@ -421,13 +491,31 @@ export class BinauralEngine {
     this.oscLeft.start();
     this.oscRight.start();
 
-    this.noiseSource = this.context.createBufferSource();
-    this.noiseSource.buffer = this.noiseBuffers[this.params.noiseType];
-    this.noiseSource.loop = true;
-    this.noiseSource.connect(this.noiseGain);
-    this.noiseSource.start();
-
     this.applyDroneBalance();
+    recordAudioDiagnostic('playback-start', { contextState: this.context.state });
+    void this.resume();
+  }
+
+  /** Reacquire both Web Audio rendering and Android media focus. Starting
+   * both promises before awaiting either keeps this safe inside the user's
+   * initial click, while later lifecycle calls are best-effort recovery. */
+  async resume(): Promise<boolean> {
+    const attempts: Promise<unknown>[] = [];
+    if (this.context.state !== 'running' && this.context.state !== 'closed') {
+      attempts.push(this.context.resume());
+    }
+    if (this.playing && this.noiseElement.paused) {
+      attempts.push(this.noiseElement.play());
+    }
+
+    const results = await Promise.allSettled(attempts);
+    const succeeded = results.every((result) => result.status === 'fulfilled');
+    recordAudioDiagnostic('playback-resume-attempt', {
+      contextState: this.context.state,
+      mediaPaused: this.noiseElement.paused,
+      succeeded,
+    });
+    return succeeded && this.context.state === 'running' && !this.noiseElement.paused;
   }
 
   /** Stop the drone + noise. The tick layer is unaffected — it's driven
@@ -458,10 +546,13 @@ export class BinauralEngine {
     });
     this.oscLeft?.stop(stopAtSec);
     this.oscRight?.stop(stopAtSec);
-    this.noiseSource?.stop(stopAtSec);
     this.oscLeft = null;
     this.oscRight = null;
-    this.noiseSource = null;
+    this.mediaElementPauseTimer = setTimeout(() => {
+      this.noiseElement.pause();
+      this.noiseElement.currentTime = 0;
+      this.mediaElementPauseTimer = null;
+    }, DRONE_STOP_RELEASE_SEC * 1000 + 5);
 
     // Unconditionally re-prime masterGain to the slider's real value.
     // `masterGain` is created once in the constructor and persists across
@@ -472,6 +563,7 @@ export class BinauralEngine {
     // same GainNode.
     this.masterGain.gain.cancelScheduledValues(this.context.currentTime);
     this.masterGain.gain.setValueAtTime(this.params.masterVolume, this.context.currentTime);
+    recordAudioDiagnostic('playback-stop', { contextState: this.context.state });
   }
 
   /**
@@ -605,24 +697,14 @@ export class BinauralEngine {
     this.masterGain.gain.setTargetAtTime(this.params.masterVolume, this.context.currentTime, 0.03);
   }
 
-  /** Swap the noise-shield texture. `AudioBufferSourceNode.buffer` can only
-   * be assigned before `start()` is called — once a source node is
-   * playing, the spec makes further buffer reassignment throw — so a
-   * live swap replaces the node itself rather than mutating the running
-   * one, carrying over the same `noiseGain` routing (and therefore the
-   * same volume/mute state) without any click, since both types were
-   * loudness-matched at generation time. */
+  /** Swap the looping media resource behind the shared noise gain. The
+   * element itself stays connected to the graph so Android keeps one
+   * stable media session across texture changes. */
   setNoiseType(noiseType: NoiseType): void {
     this.params.noiseType = noiseType;
-    if (this.playing && this.noiseSource) {
-      this.noiseSource.stop();
-      const next = this.context.createBufferSource();
-      next.buffer = this.noiseBuffers[noiseType];
-      next.loop = true;
-      next.connect(this.noiseGain);
-      next.start();
-      this.noiseSource = next;
-    }
+    this.noiseElement.src = this.noiseUrls[noiseType];
+    this.noiseElement.load();
+    if (this.playing) void this.resume();
   }
 
   setTickSound(tickSound: TickSound): void {
@@ -793,6 +875,11 @@ export class BinauralEngine {
 
   close(): void {
     this.stop();
+    if (this.mediaElementPauseTimer) clearTimeout(this.mediaElementPauseTimer);
+    this.noiseElement.pause();
+    this.noiseElement.removeAttribute('src');
+    this.noiseElement.load();
+    Object.values(this.noiseUrls).forEach((url) => URL.revokeObjectURL(url));
     void this.context.close();
   }
 }
