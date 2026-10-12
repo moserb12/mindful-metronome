@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BeatScheduler, TimeDomainSync, LOOKAHEAD_WINDOW_SEC } from './timing';
+import { BeatScheduler, TimeDomainSync, LOOKAHEAD_WINDOW_SEC, computeMissedBeatCount } from './timing';
 
 describe('TimeDomainSync', () => {
   it('converts a performance.now() timestamp taken at the sync origin to the audio origin time', () => {
@@ -41,18 +41,39 @@ describe('BeatScheduler (driven by a fake clock, no real timers)', () => {
     scheduler.stop();
   });
 
-  it('schedules multiple beats in one tick if the clock jumps forward a lot', () => {
+  it('skips overdue beats instead of playing them all in a burst after a long freeze', () => {
     let fakeNow = 0;
     const scheduled: number[] = [];
-    const scheduler = new BeatScheduler(() => fakeNow, 60, (beat) => scheduled.push(beat.timeSec));
+    const missed: number[] = [];
+    const scheduler = new BeatScheduler(
+      () => fakeNow,
+      60,
+      (beat) => scheduled.push(beat.timeSec),
+      LOOKAHEAD_WINDOW_SEC,
+      (count) => missed.push(count)
+    );
 
     scheduler.start(0.1);
     expect(scheduled).toEqual([0.1]);
 
     fakeNow = 3.05;
     scheduler.tick();
-    expect(scheduled).toEqual([0.1, 1.1, 2.1, 3.1]);
+    expect(scheduled).toEqual([0.1, 3.1]);
+    expect(missed).toEqual([2]);
 
+    scheduler.stop();
+  });
+
+  it('preserves beat parity while skipping a frozen interval', () => {
+    let fakeNow = 0;
+    const scheduledIndexes: number[] = [];
+    const scheduler = new BeatScheduler(() => fakeNow, 60, (beat) => scheduledIndexes.push(beat.beatIndex));
+
+    scheduler.start(0.1);
+    fakeNow = 4.05;
+    scheduler.tick();
+
+    expect(scheduledIndexes).toEqual([0, 4]);
     scheduler.stop();
   });
 
@@ -108,5 +129,16 @@ describe('BeatScheduler (driven by a fake clock, no real timers)', () => {
     expect(scheduled).toEqual([0.1, 1.1, 2.1, 2.6]);
 
     scheduler.stop();
+  });
+});
+
+describe('computeMissedBeatCount', () => {
+  it('returns zero when the next beat is still in the future', () => {
+    expect(computeMissedBeatCount(4, 3, 1)).toBe(0);
+  });
+
+  it('advances to the first beat at or after now', () => {
+    expect(computeMissedBeatCount(1.1, 3.05, 1)).toBe(2);
+    expect(computeMissedBeatCount(1.1, 3.1, 1)).toBe(2);
   });
 });
