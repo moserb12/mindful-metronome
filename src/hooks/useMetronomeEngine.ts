@@ -294,14 +294,10 @@ export function useMetronomeEngine() {
     chimeInterval,
     hapticsEnabled,
   });
-  // Two independent timeouts (rather than the old single wiggleTimeoutRef,
-  // which was declared and cleared but never actually assigned anywhere —
-  // dead code, fixed as a drive-by correction while this function was
-  // rewritten for tick subdivision below) so the end-tick's and the
-  // center-tick's delayed visual/haptic callbacks can each be cleared
-  // independently without one canceling the other.
-  const endTickTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const centerTickTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Background lookahead can queue dozens of visual/haptic callbacks. Keep
+  // every handle so Pause can cancel the whole queue, not just whichever
+  // end/center callback happened to be assigned most recently.
+  const scheduledAccentTimeoutsRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
   /** AudioContext time this playthrough's very first beat sounds — seeded
    * in start() (see firstBeatAtSec there), the fixed reference elapsed
    * PLAY time is measured against for the interval chime. `null` while
@@ -357,6 +353,19 @@ export function useMetronomeEngine() {
       clearTimeout(sessionEndGraceTimeoutRef.current);
       sessionEndGraceTimeoutRef.current = null;
     }
+  }
+
+  function clearScheduledAccents() {
+    scheduledAccentTimeoutsRef.current.forEach((timeout) => clearTimeout(timeout));
+    scheduledAccentTimeoutsRef.current.clear();
+  }
+
+  function scheduleAccent(callback: () => void, delayMs: number) {
+    const timeout = setTimeout(() => {
+      scheduledAccentTimeoutsRef.current.delete(timeout);
+      callback();
+    }, delayMs);
+    scheduledAccentTimeoutsRef.current.add(timeout);
   }
 
   /**
@@ -430,7 +439,7 @@ export function useMetronomeEngine() {
     // this is not clinical timing data.
     if (playsEnd) {
       const delayMs = Math.max(0, (beat.timeSec - engine.context.currentTime) * 1000);
-      endTickTimeoutRef.current = setTimeout(() => {
+      scheduleAccent(() => {
         setLastTickSide(side);
         setTickCount((c) => c + 1);
         // Fire-and-forget, feature-detected: desktop browsers simply
@@ -447,7 +456,7 @@ export function useMetronomeEngine() {
       // correct destination hemisphere for this pulse.
       const centerSide: 'left' | 'right' = side === 'left' ? 'right' : 'left';
       const centerDelayMs = Math.max(0, (centerTimeSec - engine.context.currentTime) * 1000);
-      centerTickTimeoutRef.current = setTimeout(() => {
+      scheduleAccent(() => {
         setLastTickSide(centerSide);
         setTickCount((c) => c + 1);
         if (paramsRef.current.hapticsEnabled && 'vibrate' in navigator) {
@@ -474,8 +483,7 @@ export function useMetronomeEngine() {
     lifecycleCleanupRef.current?.();
     lifecycleCleanupRef.current = null;
     engineRef.current?.stop();
-    if (endTickTimeoutRef.current) clearTimeout(endTickTimeoutRef.current);
-    if (centerTickTimeoutRef.current) clearTimeout(centerTickTimeoutRef.current);
+    clearScheduledAccents();
     clearSessionPolling();
     playStartTimeSecRef.current = null;
     nextChimeMarkRef.current = 1;
@@ -931,8 +939,7 @@ export function useMetronomeEngine() {
       lifecycleCleanupRef.current?.();
       lifecycleCleanupRef.current = null;
       engineRef.current?.close();
-      if (endTickTimeoutRef.current) clearTimeout(endTickTimeoutRef.current);
-      if (centerTickTimeoutRef.current) clearTimeout(centerTickTimeoutRef.current);
+      clearScheduledAccents();
       clearSessionPolling();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
