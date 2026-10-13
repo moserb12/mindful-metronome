@@ -56,11 +56,24 @@ interface ControlPanelProps {
  * useState/aria-expanded bookkeeping. Styled to match .control-group's
  * existing look (see index.css's .control-group-summary/-chevron rules)
  * so the panel's overall visual rhythm doesn't shift. */
-function CollapsibleGroup({ title, defaultOpen = false, children }: { title: string; defaultOpen?: boolean; children: React.ReactNode }) {
+function CollapsibleGroup({
+  title,
+  description,
+  defaultOpen = false,
+  children,
+}: {
+  title: string;
+  description: string;
+  defaultOpen?: boolean;
+  children: React.ReactNode;
+}) {
   return (
     <details className="control-group" open={defaultOpen}>
       <summary className="control-group-summary">
-        <span className="control-label">{title}</span>
+        <span className="control-group-summary-copy">
+          <span className="control-label">{title}</span>
+          <span className="control-group-description">{description}</span>
+        </span>
         <span className="control-group-chevron" aria-hidden="true">
           ▸
         </span>
@@ -414,37 +427,7 @@ export function ControlPanel({
         )}
       </div>
 
-      <CollapsibleGroup title="Sound design">
-        <div className="control-row-header">
-          <span className="control-label">Carrier tone</span>
-          <span className="control-value">{carrierHz.toFixed(0)} Hz</span>
-        </div>
-        <input
-          type="range"
-          min={MIN_CARRIER_HZ}
-          max={MAX_CARRIER_HZ}
-          step={1}
-          value={carrierHz}
-          onChange={(e) => onSetCarrierHz(Number(e.target.value))}
-        />
-        <div className="mixer-divider" />
-        <div className="control-row-header">
-          <span className="control-label">Binaural offset</span>
-          <span className="control-value" style={{ color: BANDS[band].color }}>
-            {beatHz.toFixed(1)} Hz · {BANDS[band].label}
-          </span>
-        </div>
-        <input
-          type="range"
-          min={MIN_BEAT_HZ}
-          max={MAX_BEAT_HZ}
-          step={0.5}
-          value={beatHz}
-          onChange={(e) => onSetBeatHz(Number(e.target.value))}
-        />
-      </CollapsibleGroup>
-
-      <CollapsibleGroup title="Ear & Beat">
+      <CollapsibleGroup title="Beat & stereo" description="Tick placement and left/right motion">
         <div className="control-row-header">
           <span className="control-label">Tick ear</span>
           <span className="control-value">{splitPreviewLabel(panModulationDepth)} at the extremes</span>
@@ -491,7 +474,7 @@ export function ControlPanel({
         </div>
       </CollapsibleGroup>
 
-      <CollapsibleGroup title="Chime & Extras">
+      <CollapsibleGroup title="Session extras" description="Interval chimes and haptics">
         <span className="control-label">Chime every</span>
         <div className="ear-mode-row" style={{ '--chip-color': BANDS[band].color } as React.CSSProperties}>
           {CHIME_INTERVAL_OPTIONS.map((opt) => (
@@ -526,6 +509,36 @@ export function ControlPanel({
             <p className="control-hint">A brief, subtle vibration on every tick — a bilateral pulse you can actually feel.</p>
           </>
         )}
+      </CollapsibleGroup>
+
+      <CollapsibleGroup title="Advanced sound" description="Carrier and binaural frequencies">
+        <div className="control-row-header">
+          <span className="control-label">Carrier tone</span>
+          <span className="control-value">{carrierHz.toFixed(0)} Hz</span>
+        </div>
+        <input
+          type="range"
+          min={MIN_CARRIER_HZ}
+          max={MAX_CARRIER_HZ}
+          step={1}
+          value={carrierHz}
+          onChange={(e) => onSetCarrierHz(Number(e.target.value))}
+        />
+        <div className="mixer-divider" />
+        <div className="control-row-header">
+          <span className="control-label">Binaural offset</span>
+          <span className="control-value" style={{ color: BANDS[band].color }}>
+            {beatHz.toFixed(1)} Hz · {BANDS[band].label}
+          </span>
+        </div>
+        <input
+          type="range"
+          min={MIN_BEAT_HZ}
+          max={MAX_BEAT_HZ}
+          step={0.5}
+          value={beatHz}
+          onChange={(e) => onSetBeatHz(Number(e.target.value))}
+        />
       </CollapsibleGroup>
     </div>
   );
