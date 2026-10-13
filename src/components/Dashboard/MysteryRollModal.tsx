@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { MYSTERY_MEDALLIONS, MYSTERY_MEDALLIONS_BY_ID, RARITY_BLURB, RARITY_LABEL, type MysteryMedallionId } from '../../data/mysteryMedallions';
 import { MedallionIcon } from './MedallionIcon';
 
@@ -42,7 +43,10 @@ export function MysteryRollModal({ resultId, onClose }: MysteryRollModalProps) {
   const [reel] = useState(() => buildReel(resultId));
   const [phase, setPhase] = useState<'spinning' | 'revealed'>('spinning');
   const trackRef = useRef<HTMLDivElement | null>(null);
+  const closeButtonRef = useRef<HTMLButtonElement | null>(null);
   const revealTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
 
   const def = MYSTERY_MEDALLIONS_BY_ID[resultId];
 
@@ -77,16 +81,30 @@ export function MysteryRollModal({ resultId, onClose }: MysteryRollModalProps) {
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') onCloseRef.current();
     }
+    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const previousBodyOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    closeButtonRef.current?.focus();
     document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [onClose]);
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+      document.body.style.overflow = previousBodyOverflow;
+      previouslyFocused?.focus();
+    };
+  }, []);
 
-  return (
+  return createPortal(
     <div className="mystery-roll-backdrop" role="dialog" aria-modal="true" aria-label="Mystery fruit reveal">
       <div className={`mystery-roll-modal rarity-${def.rarity} ${phase === 'revealed' ? 'revealed' : ''}`}>
-        <button type="button" className="medallion-picker-close mystery-roll-close" onClick={onClose} aria-label="Close">
+        <button
+          ref={closeButtonRef}
+          type="button"
+          className="medallion-picker-close mystery-roll-close"
+          onClick={onClose}
+          aria-label="Close"
+        >
           ×
         </button>
 
@@ -116,6 +134,7 @@ export function MysteryRollModal({ resultId, onClose }: MysteryRollModalProps) {
           </div>
         )}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

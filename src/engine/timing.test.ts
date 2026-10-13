@@ -130,6 +130,20 @@ describe('BeatScheduler (driven by a fake clock, no real timers)', () => {
 
     scheduler.stop();
   });
+
+  it('can restart a tempo phase without losing left/right beat parity', () => {
+    let fakeNow = 5;
+    const scheduledIndexes: number[] = [];
+    const scheduler = new BeatScheduler(() => fakeNow, 120, (beat) => scheduledIndexes.push(beat.beatIndex));
+
+    scheduler.start(5.1, 1);
+    expect(scheduledIndexes).toEqual([1]);
+
+    fakeNow = 5.6;
+    scheduler.tick();
+    expect(scheduledIndexes).toEqual([1, 2]);
+    scheduler.stop();
+  });
 });
 
 describe('computeMissedBeatCount', () => {

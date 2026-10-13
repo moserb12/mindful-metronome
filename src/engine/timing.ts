@@ -113,10 +113,11 @@ export class BeatScheduler {
 
   /** Begin scheduling beats starting at `startTimeSec` (defaults to "soon",
    * a small buffer after now so the very first beat has time to actually
-   * get scheduled before it's due). */
-  start(startTimeSec: number = this.getCurrentTimeSec() + 0.1): void {
+   * get scheduled before it's due). `startBeatIndex` lets a restarted
+   * phase preserve left/right parity across a live tempo change. */
+  start(startTimeSec: number = this.getCurrentTimeSec() + 0.1, startBeatIndex = 0): void {
     this.nextBeatTimeSec = startTimeSec;
-    this.nextBeatIndex = 0;
+    this.nextBeatIndex = startBeatIndex;
     this.running = true;
     this.tick(); // schedule anything already due immediately, don't wait
     this.intervalHandle = setInterval(() => this.tick(), SCHEDULER_TICK_MS);

@@ -41,6 +41,7 @@
 
 import { pendulumEase } from '../engine/motion';
 import { recordAudioDiagnostic } from './audioDiagnostics';
+import { ScheduledAudioSourceRegistry } from './scheduledAudioSources';
 
 export type TickSound = 'soft' | 'wood' | 'kick' | 'hihat';
 
@@ -202,43 +203,6 @@ function buildBrownNoiseBuffer(context: AudioContext, seconds = 8): AudioBuffer 
   return buffer;
 }
 
-/** Encode a generated mono AudioBuffer as an ordinary WAV media resource.
- * Chrome on Android grants media focus to a playing HTMLMediaElement, but
- * not to a graph made only from Web Audio nodes. The noise/ambiance layer
- * therefore enters the graph through a real looping <audio> element. */
-function audioBufferToWavBlob(buffer: AudioBuffer): Blob {
-  const samples = buffer.getChannelData(0);
-  const bytesPerSample = 2;
-  const dataLength = samples.length * bytesPerSample;
-  const wav = new ArrayBuffer(44 + dataLength);
-  const view = new DataView(wav);
-
-  const writeAscii = (offset: number, value: string) => {
-    for (let i = 0; i < value.length; i++) view.setUint8(offset + i, value.charCodeAt(i));
-  };
-
-  writeAscii(0, 'RIFF');
-  view.setUint32(4, 36 + dataLength, true);
-  writeAscii(8, 'WAVE');
-  writeAscii(12, 'fmt ');
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true); // PCM
-  view.setUint16(22, 1, true); // mono
-  view.setUint32(24, buffer.sampleRate, true);
-  view.setUint32(28, buffer.sampleRate * bytesPerSample, true);
-  view.setUint16(32, bytesPerSample, true);
-  view.setUint16(34, 16, true);
-  writeAscii(36, 'data');
-  view.setUint32(40, dataLength, true);
-
-  for (let i = 0; i < samples.length; i++) {
-    const sample = Math.max(-1, Math.min(1, samples[i]));
-    view.setInt16(44 + i * bytesPerSample, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
-  }
-
-  return new Blob([wav], { type: 'audio/wav' });
-}
-
 /** Generates 8 seconds of "rainy forest" ambiance: a pink-noise bed (the
  * same Paul Kellet cascade as buildPinkNoiseBuffer, scaled down to ~40%
  * since it's a bed under the droplets, not the whole texture) plus
@@ -370,9 +334,12 @@ export class BinauralEngine {
 
   private oscLeft: OscillatorNode | null = null;
   private oscRight: OscillatorNode | null = null;
-  private readonly noiseElement: HTMLAudioElement;
-  private readonly noiseUrls: Record<NoiseType, string>;
+  private noiseSource: AudioBufferSourceNode | null = null;
+  private readonly noiseBuffers: Record<NoiseType, AudioBuffer>;
+  private readonly outputElement: HTMLAudioElement;
+  private readonly outputStream: MediaStream;
   private mediaElementPauseTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly scheduledTransientSources = new ScheduledAudioSourceRegistry();
 
   /** Per-ear drone gain, so the L/R balance can move independently of the
    * master droneVolume. Their values always sum to droneVolume. */
@@ -380,6 +347,7 @@ export class BinauralEngine {
   private readonly droneGainRight: GainNode;
   private readonly tickGain: GainNode;
   private readonly noiseGain: GainNode;
+  private readonly transientGateGain: GainNode;
   /** Final trim applied AFTER analyser, on top of the already-mixed signal
    * — see the file-level comment for why this doesn't replace the
    * per-channel gains above. */
@@ -404,7 +372,22 @@ export class BinauralEngine {
     this.masterGain = this.context.createGain();
     this.masterGain.gain.value = clamp01(initialParams.masterVolume);
     this.analyser.connect(this.masterGain);
-    this.masterGain.connect(this.context.destination);
+
+    // Feed the final mix to a real, open-ended MediaStream-backed audio
+    // element. Android then treats the session as live media (rather than
+    // showing an eight-second WAV timeline looping forever) while still
+    // granting the page media focus during screen-off playback.
+    const outputDestination = this.context.createMediaStreamDestination();
+    this.masterGain.connect(outputDestination);
+    this.outputStream = outputDestination.stream;
+    this.outputElement = new Audio();
+    this.outputElement.srcObject = this.outputStream;
+    this.outputElement.preload = 'auto';
+    this.outputElement.title = 'Mindful Metronome';
+    this.outputElement.hidden = true;
+    this.outputElement.setAttribute('aria-hidden', 'true');
+    this.outputElement.dataset.audioOutput = 'live';
+    document.body.appendChild(this.outputElement);
 
     this.droneGainLeft = this.context.createGain();
     this.droneGainRight = this.context.createGain();
@@ -415,13 +398,16 @@ export class BinauralEngine {
 
     this.tickGain = this.context.createGain();
     this.tickGain.gain.value = initialParams.tickVolume;
-    this.tickGain.connect(this.analyser);
+    this.transientGateGain = this.context.createGain();
+    this.transientGateGain.gain.value = 1;
+    this.tickGain.connect(this.transientGateGain);
+    this.transientGateGain.connect(this.analyser);
 
     this.noiseGain = this.context.createGain();
     this.noiseGain.gain.value = initialParams.noiseVolume;
     this.noiseGain.connect(this.analyser);
 
-    const noiseBuffers: Record<NoiseType, AudioBuffer> = {
+    this.noiseBuffers = {
       pink: buildPinkNoiseBuffer(this.context),
       white: buildWhiteNoiseBuffer(this.context),
       brown: buildBrownNoiseBuffer(this.context),
@@ -430,22 +416,19 @@ export class BinauralEngine {
       drippyCavern: buildDrippyCavernBuffer(this.context),
     };
 
-    this.noiseUrls = Object.fromEntries(
-      Object.entries(noiseBuffers).map(([type, buffer]) => [type, URL.createObjectURL(audioBufferToWavBlob(buffer))])
-    ) as Record<NoiseType, string>;
-    this.noiseElement = new Audio(this.noiseUrls[initialParams.noiseType]);
-    this.noiseElement.loop = true;
-    this.noiseElement.preload = 'auto';
-    this.noiseElement.title = 'Mindful Metronome';
-    this.context.createMediaElementSource(this.noiseElement).connect(this.noiseGain);
-
     this.context.addEventListener('statechange', () => {
       recordAudioDiagnostic('audio-context-state', { state: this.context.state, playing: this.playing });
     });
-    this.noiseElement.addEventListener('play', () => recordAudioDiagnostic('media-element-play'));
-    this.noiseElement.addEventListener('pause', () => recordAudioDiagnostic('media-element-pause'));
-    this.noiseElement.addEventListener('error', () => {
-      recordAudioDiagnostic('media-element-error', { code: this.noiseElement.error?.code ?? null });
+    this.outputElement.addEventListener('loadedmetadata', () => {
+      recordAudioDiagnostic('media-element-metadata', {
+        live: this.outputElement.duration === Infinity,
+        durationSec: Number.isFinite(this.outputElement.duration) ? this.outputElement.duration : null,
+      });
+    });
+    this.outputElement.addEventListener('play', () => recordAudioDiagnostic('media-element-play'));
+    this.outputElement.addEventListener('pause', () => recordAudioDiagnostic('media-element-pause'));
+    this.outputElement.addEventListener('error', () => {
+      recordAudioDiagnostic('media-element-error', { code: this.outputElement.error?.code ?? null });
     });
   }
 
@@ -469,10 +452,11 @@ export class BinauralEngine {
     // playthroughs, so every fresh start must restore the mix before the
     // new sources begin (including a rapid stop/start during the 30ms fade).
     const now = this.context.currentTime;
-    [this.droneGainLeft, this.droneGainRight, this.noiseGain].forEach((gainNode) => {
+    [this.droneGainLeft, this.droneGainRight, this.noiseGain, this.transientGateGain].forEach((gainNode) => {
       gainNode.gain.cancelScheduledValues(now);
     });
     this.noiseGain.gain.setValueAtTime(clamp01(this.params.noiseVolume), now);
+    this.transientGateGain.gain.setValueAtTime(1, now);
 
     this.oscLeft = this.context.createOscillator();
     this.oscLeft.type = 'sine';
@@ -490,6 +474,8 @@ export class BinauralEngine {
 
     this.oscLeft.start();
     this.oscRight.start();
+    this.noiseSource = this.createNoiseSource(this.params.noiseType);
+    this.noiseSource.start();
 
     this.applyDroneBalance();
     recordAudioDiagnostic('playback-start', { contextState: this.context.state });
@@ -504,22 +490,22 @@ export class BinauralEngine {
     if (this.context.state !== 'running' && this.context.state !== 'closed') {
       attempts.push(this.context.resume());
     }
-    if (this.playing && this.noiseElement.paused) {
-      attempts.push(this.noiseElement.play());
+    if (this.playing && this.outputElement.paused) {
+      attempts.push(this.outputElement.play());
     }
 
     const results = await Promise.allSettled(attempts);
     const succeeded = results.every((result) => result.status === 'fulfilled');
     recordAudioDiagnostic('playback-resume-attempt', {
       contextState: this.context.state,
-      mediaPaused: this.noiseElement.paused,
+      mediaPaused: this.outputElement.paused,
       succeeded,
     });
-    return succeeded && this.context.state === 'running' && !this.noiseElement.paused;
+    return succeeded && this.context.state === 'running' && !this.outputElement.paused;
   }
 
-  /** Stop the drone + noise. The tick layer is unaffected — it's driven
-   * externally by BeatScheduler and each tick is a one-shot regardless. */
+  /** Stop every audible layer, including one-shot ticks already committed
+   * to the Web Audio timeline by the background lookahead scheduler. */
   stop(): void {
     if (!this.playing) return;
     this.playing = false;
@@ -546,11 +532,20 @@ export class BinauralEngine {
     });
     this.oscLeft?.stop(stopAtSec);
     this.oscRight?.stop(stopAtSec);
+    this.noiseSource?.stop(stopAtSec);
     this.oscLeft = null;
     this.oscRight = null;
+    this.noiseSource = null;
+
+    // Silence and cancel every tick/chime that was pre-scheduled during the
+    // 30-second background window. Merely stopping BeatScheduler prevents
+    // new work; it cannot retract AudioScheduledSourceNodes already queued.
+    this.transientGateGain.gain.cancelScheduledValues(now);
+    this.transientGateGain.gain.setValueAtTime(this.transientGateGain.gain.value, now);
+    this.transientGateGain.gain.linearRampToValueAtTime(0, stopAtSec);
+    const canceledTransientCount = this.cancelScheduledTransients(stopAtSec);
     this.mediaElementPauseTimer = setTimeout(() => {
-      this.noiseElement.pause();
-      this.noiseElement.currentTime = 0;
+      this.outputElement.pause();
       this.mediaElementPauseTimer = null;
     }, DRONE_STOP_RELEASE_SEC * 1000 + 5);
 
@@ -563,7 +558,10 @@ export class BinauralEngine {
     // same GainNode.
     this.masterGain.gain.cancelScheduledValues(this.context.currentTime);
     this.masterGain.gain.setValueAtTime(this.params.masterVolume, this.context.currentTime);
-    recordAudioDiagnostic('playback-stop', { contextState: this.context.state });
+    recordAudioDiagnostic('playback-stop', {
+      contextState: this.context.state,
+      canceledTransientCount,
+    });
   }
 
   /**
@@ -611,7 +609,7 @@ export class BinauralEngine {
     const root = this.params.carrierHz;
     const intervals = [1, 1.5, 2]; // root, fifth, octave
     const chimeGain = this.context.createGain();
-    chimeGain.connect(this.analyser);
+    chimeGain.connect(this.transientGateGain);
     chimeGain.gain.setValueAtTime(0, now);
     chimeGain.gain.linearRampToValueAtTime(0.35, now + 0.3);
     chimeGain.gain.exponentialRampToValueAtTime(0.0001, now + 4);
@@ -621,6 +619,7 @@ export class BinauralEngine {
       osc.type = 'sine';
       osc.frequency.value = root * ratio;
       osc.connect(chimeGain);
+      this.trackTransientSource(osc);
       osc.start(now);
       osc.stop(now + 4.1);
     });
@@ -646,7 +645,8 @@ export class BinauralEngine {
       osc.frequency.setValueAtTime(root * 1.5, toneStart);
       gain.gain.setValueAtTime(0, toneStart);
       gain.gain.linearRampToValueAtTime(0.28, toneStart + 0.015);
-      osc.connect(gain).connect(this.analyser);
+      osc.connect(gain).connect(this.transientGateGain);
+      this.trackTransientSource(osc);
       const stopAt = toneStart + INTERVAL_CHIME_TONE_SEC;
       // Same click-free release shape as fireTickOscillator(): ride the
       // exponential decay near-silent, then a short linear ramp to an
@@ -697,14 +697,15 @@ export class BinauralEngine {
     this.masterGain.gain.setTargetAtTime(this.params.masterVolume, this.context.currentTime, 0.03);
   }
 
-  /** Swap the looping media resource behind the shared noise gain. The
-   * element itself stays connected to the graph so Android keeps one
-   * stable media session across texture changes. */
+  /** Swap the generated looping texture while leaving the live output
+   * stream and its Android media session untouched. */
   setNoiseType(noiseType: NoiseType): void {
     this.params.noiseType = noiseType;
-    this.noiseElement.src = this.noiseUrls[noiseType];
-    this.noiseElement.load();
-    if (this.playing) void this.resume();
+    if (this.playing) {
+      this.noiseSource?.stop();
+      this.noiseSource = this.createNoiseSource(noiseType);
+      this.noiseSource.start();
+    }
   }
 
   setTickSound(tickSound: TickSound): void {
@@ -721,6 +722,20 @@ export class BinauralEngine {
    * scheduleDroneSwing() call. */
   setPanModulationDepth(depth: number): void {
     this.params.panModulationDepth = clamp01(depth);
+  }
+
+  /** Retract rhythm events that the lookahead scheduler already committed
+   * at or after a shared transition point. The continuous drone/noise stay
+   * alive; the caller immediately replaces these ticks and swing curves
+   * with a new tempo phase beginning at the same pendulum endpoint. */
+  clearScheduledRhythmAfter(transitionTimeSec: number): void {
+    this.droneGainLeft.gain.cancelScheduledValues(transitionTimeSec);
+    this.droneGainRight.gain.cancelScheduledValues(transitionTimeSec);
+    const canceledTransientCount = this.cancelScheduledTransients(transitionTimeSec);
+    recordAudioDiagnostic('rhythm-rescheduled', {
+      transitionTimeSec,
+      canceledTransientCount,
+    });
   }
 
   /**
@@ -808,6 +823,7 @@ export class BinauralEngine {
     panner.pan.value = clampPan(panValue);
 
     osc.connect(gain).connect(panner).connect(this.tickGain);
+    this.trackTransientSource(osc);
 
     let duration: number;
     switch (this.params.tickSound) {
@@ -873,13 +889,29 @@ export class BinauralEngine {
     this.fireTickOscillator(atTimeSec, 0, CENTER_TICK_GAIN_SCALE);
   }
 
+  private createNoiseSource(noiseType: NoiseType): AudioBufferSourceNode {
+    const source = this.context.createBufferSource();
+    source.buffer = this.noiseBuffers[noiseType];
+    source.loop = true;
+    source.connect(this.noiseGain);
+    return source;
+  }
+
+  private trackTransientSource(source: AudioScheduledSourceNode): void {
+    this.scheduledTransientSources.track(source);
+  }
+
+  private cancelScheduledTransients(stopAtSec: number): number {
+    return this.scheduledTransientSources.cancelAll(stopAtSec);
+  }
+
   close(): void {
     this.stop();
     if (this.mediaElementPauseTimer) clearTimeout(this.mediaElementPauseTimer);
-    this.noiseElement.pause();
-    this.noiseElement.removeAttribute('src');
-    this.noiseElement.load();
-    Object.values(this.noiseUrls).forEach((url) => URL.revokeObjectURL(url));
+    this.outputElement.pause();
+    this.outputElement.srcObject = null;
+    this.outputElement.remove();
+    this.outputStream.getTracks().forEach((track) => track.stop());
     void this.context.close();
   }
 }

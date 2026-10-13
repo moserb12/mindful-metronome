@@ -28,12 +28,13 @@ settings; application source should not be edited independently in Vercel.
 
 ## Android background audio
 
-The generated noise/ambiance layer plays through a looping HTML audio
-element that is routed into the Web Audio graph. This gives Chrome on
-Android a real media session and Audio Focus while preserving the existing
-mixer, analyser, and synthesized binaural/tick layers. Page lifecycle and
-AudioContext recovery handlers resynchronize the beat scheduler after an
-OS interruption without replaying overdue beats in a burst.
+The complete Web Audio mix is routed into a `MediaStreamAudioDestinationNode`
+and played by an HTML audio element as an open-ended live stream. This gives
+Chrome on Android a real media session and Audio Focus without presenting an
+artificial short-file timeline in notification controls. Page lifecycle and
+AudioContext recovery handlers resynchronize the beat scheduler after an OS
+interruption without replaying overdue beats in a burst. Pause also cancels
+every tick/chime already committed by the background lookahead scheduler.
 
 The last 80 lifecycle events are retained locally under
 `mindful-metronome:audio-diagnostics:v1` in browser localStorage. This is a

@@ -9,6 +9,7 @@ import {
   type TickSubdivision,
 } from '../audio/binauralEngine';
 import { classifyBeatFrequency, DEFAULT_PRESET, MAX_BPM, MIN_BPM } from '../data/bands';
+import { normalizeNoiseShieldType } from '../data/noiseShields';
 import { MOOD_BY_BAND } from '../data/moods';
 import { clamp } from '../engine/motion';
 import { recordAudioDiagnostic } from '../audio/audioDiagnostics';
@@ -81,7 +82,7 @@ function resolveInitialSettings() {
     droneVolume: stored.droneVolume ?? 0.55,
     tickVolume: stored.tickVolume ?? 0.7,
     noiseVolume: stored.noiseVolume ?? 0.08,
-    noiseType: urlOverrides.noiseType ?? stored.noiseType ?? ('pink' as NoiseType),
+    noiseType: normalizeNoiseShieldType(urlOverrides.noiseType ?? stored.noiseType ?? ('pink' as NoiseType)),
     panModulationDepth: stored.panModulationDepth ?? 0.6,
     tickEarMode: stored.tickEarMode ?? ('MATCH' as TickEarMode),
     tickSubdivision: stored.tickSubdivision ?? ('ENDS' as TickSubdivision),
@@ -134,7 +135,12 @@ export interface SwingState {
    * reference (rather than read live from React state) so a mid-play BPM
    * change can never retroactively distort segments computed before it. */
   secondsPerBeat: number;
+  /** A tempo change waits for the current swing to reach its destination.
+   * From this anchor onward both the visual and audio use the new tempo. */
+  next?: SwingAnchor;
 }
+
+export type SwingAnchor = Omit<SwingState, 'next'>;
 
 /**
  * What applyPreset() accepts — a superset of both preset shapes in the
@@ -182,7 +188,8 @@ function oppositeSide(side: 'left' | 'right'): 'left' | 'right' {
  * mid-play.
  */
 export function computeSwingSegment(nowSec: number, ref: SwingState): SwingSegment {
-  const { referenceTimeSec, referenceSide, secondsPerBeat } = ref;
+  const activeRef = ref.next && nowSec >= ref.next.referenceTimeSec ? ref.next : ref;
+  const { referenceTimeSec, referenceSide, secondsPerBeat } = activeRef;
   const segmentIndex = Math.floor((nowSec - referenceTimeSec) / secondsPerBeat);
   const segmentEndSec = referenceTimeSec + (segmentIndex + 1) * secondsPerBeat;
   const segmentStartSec = segmentEndSec - secondsPerBeat;
@@ -294,14 +301,10 @@ export function useMetronomeEngine() {
     chimeInterval,
     hapticsEnabled,
   });
-  // Two independent timeouts (rather than the old single wiggleTimeoutRef,
-  // which was declared and cleared but never actually assigned anywhere —
-  // dead code, fixed as a drive-by correction while this function was
-  // rewritten for tick subdivision below) so the end-tick's and the
-  // center-tick's delayed visual/haptic callbacks can each be cleared
-  // independently without one canceling the other.
-  const endTickTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const centerTickTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Background lookahead can queue dozens of visual/haptic callbacks. Keep
+  // every handle so Pause can cancel the whole queue, not just whichever
+  // end/center callback happened to be assigned most recently.
+  const scheduledAccentTimeoutsRef = useRef<Map<ReturnType<typeof setTimeout>, number>>(new Map());
   /** AudioContext time this playthrough's very first beat sounds — seeded
    * in start() (see firstBeatAtSec there), the fixed reference elapsed
    * PLAY time is measured against for the interval chime. `null` while
@@ -357,6 +360,23 @@ export function useMetronomeEngine() {
       clearTimeout(sessionEndGraceTimeoutRef.current);
       sessionEndGraceTimeoutRef.current = null;
     }
+  }
+
+  function clearScheduledAccents(atOrAfterTimeSec?: number) {
+    scheduledAccentTimeoutsRef.current.forEach((scheduledTimeSec, timeout) => {
+      if (atOrAfterTimeSec === undefined || scheduledTimeSec >= atOrAfterTimeSec) {
+        clearTimeout(timeout);
+        scheduledAccentTimeoutsRef.current.delete(timeout);
+      }
+    });
+  }
+
+  function scheduleAccent(callback: () => void, delayMs: number, scheduledTimeSec: number) {
+    const timeout = setTimeout(() => {
+      scheduledAccentTimeoutsRef.current.delete(timeout);
+      callback();
+    }, delayMs);
+    scheduledAccentTimeoutsRef.current.set(timeout, scheduledTimeSec);
   }
 
   /**
@@ -430,7 +450,7 @@ export function useMetronomeEngine() {
     // this is not clinical timing data.
     if (playsEnd) {
       const delayMs = Math.max(0, (beat.timeSec - engine.context.currentTime) * 1000);
-      endTickTimeoutRef.current = setTimeout(() => {
+      scheduleAccent(() => {
         setLastTickSide(side);
         setTickCount((c) => c + 1);
         // Fire-and-forget, feature-detected: desktop browsers simply
@@ -438,7 +458,7 @@ export function useMetronomeEngine() {
         if (paramsRef.current.hapticsEnabled && 'vibrate' in navigator) {
           navigator.vibrate(15);
         }
-      }, delayMs);
+      }, delayMs, beat.timeSec);
     }
     if (playsCenter) {
       // Opposite hemisphere from the side this beat just landed on: the
@@ -447,13 +467,13 @@ export function useMetronomeEngine() {
       // correct destination hemisphere for this pulse.
       const centerSide: 'left' | 'right' = side === 'left' ? 'right' : 'left';
       const centerDelayMs = Math.max(0, (centerTimeSec - engine.context.currentTime) * 1000);
-      centerTickTimeoutRef.current = setTimeout(() => {
+      scheduleAccent(() => {
         setLastTickSide(centerSide);
         setTickCount((c) => c + 1);
         if (paramsRef.current.hapticsEnabled && 'vibrate' in navigator) {
           navigator.vibrate(15);
         }
-      }, centerDelayMs);
+      }, centerDelayMs, centerTimeSec);
     }
   }, []);
 
@@ -474,8 +494,7 @@ export function useMetronomeEngine() {
     lifecycleCleanupRef.current?.();
     lifecycleCleanupRef.current = null;
     engineRef.current?.stop();
-    if (endTickTimeoutRef.current) clearTimeout(endTickTimeoutRef.current);
-    if (centerTickTimeoutRef.current) clearTimeout(centerTickTimeoutRef.current);
+    clearScheduledAccents();
     clearSessionPolling();
     playStartTimeSecRef.current = null;
     nextChimeMarkRef.current = 1;
@@ -737,33 +756,57 @@ export function useMetronomeEngine() {
   }, [isPlaying, pollSession]);
 
   const setCarrierHz = useCallback((hz: number) => {
+    paramsRef.current.carrierHz = hz;
     setCarrierHzState(hz);
     engineRef.current?.setFrequencies(hz, paramsRef.current.beatHz);
   }, []);
 
   const setBeatHz = useCallback((hz: number) => {
+    paramsRef.current.beatHz = hz;
     setBeatHzState(hz);
     engineRef.current?.setFrequencies(paramsRef.current.carrierHz, hz);
   }, []);
 
   const setBpm = useCallback((next: number) => {
+    const previousBpm = paramsRef.current.bpm;
+    paramsRef.current.bpm = next;
     setBpmState(next);
-    schedulerRef.current?.setBpm(next);
+    if (next === previousBpm) return;
 
-    // Re-anchor the visual's reference point at the moment the tempo
-    // changes, so segments computed before this instant are never
-    // retroactively stretched/compressed by the new secondsPerBeat. Picks
-    // up mid-swing exactly where the arm currently is (whichever side it
-    // was already heading toward), just continuing at the new pace.
+    // Finish the current swing at its original pace, then begin one new
+    // phase for BOTH the lookahead audio scheduler and the visual clock at
+    // that exact endpoint. This also retracts any old-tempo ticks already
+    // queued by the background lookahead window.
     const engine = engineRef.current;
-    if (engine && swingRef.current) {
+    const scheduler = schedulerRef.current;
+    if (engine && scheduler && swingRef.current) {
       const now = engine.context.currentTime;
       const segment = computeSwingSegment(now, swingRef.current);
-      swingRef.current = { referenceTimeSec: segment.toTimeSec, referenceSide: segment.toSide, secondsPerBeat: 60 / next };
+      const transitionTimeSec = segment.toTimeSec;
+      swingRef.current = {
+        referenceTimeSec: segment.fromTimeSec,
+        referenceSide: segment.fromSide,
+        secondsPerBeat: segment.toTimeSec - segment.fromTimeSec,
+        next: {
+          referenceTimeSec: transitionTimeSec,
+          referenceSide: segment.toSide,
+          secondsPerBeat: 60 / next,
+        },
+      };
+
+      scheduler.stop();
+      engine.clearScheduledRhythmAfter(transitionTimeSec);
+      clearScheduledAccents(transitionTimeSec);
+      scheduler.setBpm(next);
+      scheduler.start(transitionTimeSec, segment.toSide === 'left' ? 0 : 1);
+      return;
     }
+
+    scheduler?.setBpm(next);
   }, []);
 
   const setTickSound = useCallback((sound: TickSound) => {
+    paramsRef.current.tickSound = sound;
     setTickSoundState(sound);
     engineRef.current?.setTickSound(sound);
   }, []);
@@ -774,6 +817,9 @@ export function useMetronomeEngine() {
       tickVolume: next.tickVolume ?? paramsRef.current.tickVolume,
       noiseVolume: next.noiseVolume ?? paramsRef.current.noiseVolume,
     };
+    paramsRef.current.droneVolume = merged.droneVolume;
+    paramsRef.current.tickVolume = merged.tickVolume;
+    paramsRef.current.noiseVolume = merged.noiseVolume;
     if (next.droneVolume !== undefined) setDroneVolumeState(next.droneVolume);
     if (next.tickVolume !== undefined) setTickVolumeState(next.tickVolume);
     if (next.noiseVolume !== undefined) setNoiseVolumeState(next.noiseVolume);
@@ -781,21 +827,26 @@ export function useMetronomeEngine() {
   }, []);
 
   const setMasterVolume = useCallback((volume: number) => {
+    paramsRef.current.masterVolume = volume;
     setMasterVolumeState(volume);
     engineRef.current?.setMasterVolume(volume);
   }, []);
 
   const setNoiseType = useCallback((type: NoiseType) => {
-    setNoiseTypeState(type);
-    engineRef.current?.setNoiseType(type);
+    const normalizedType = normalizeNoiseShieldType(type);
+    paramsRef.current.noiseType = normalizedType;
+    setNoiseTypeState(normalizedType);
+    engineRef.current?.setNoiseType(normalizedType);
   }, []);
 
   const setPanModulationDepth = useCallback((depth: number) => {
+    paramsRef.current.panModulationDepth = depth;
     setPanModulationDepthState(depth);
     engineRef.current?.setPanModulationDepth(depth);
   }, []);
 
   const setTickEarMode = useCallback((mode: TickEarMode) => {
+    paramsRef.current.tickEarMode = mode;
     setTickEarModeState(mode);
     engineRef.current?.setTickEarMode(mode);
   }, []);
@@ -803,16 +854,19 @@ export function useMetronomeEngine() {
   // No engine call — BinauralEngine never holds this value, it's read
   // straight from paramsRef inside handleBeatScheduled every beat.
   const setTickSubdivision = useCallback((subdivision: TickSubdivision) => {
+    paramsRef.current.tickSubdivision = subdivision;
     setTickSubdivisionState(subdivision);
   }, []);
 
   // Same reasoning as setTickSubdivision above — read fresh from
   // paramsRef inside handleBeatScheduled, no engine call here.
   const setChimeInterval = useCallback((interval: ChimeInterval) => {
+    paramsRef.current.chimeInterval = interval;
     setChimeIntervalState(interval);
   }, []);
 
   const setHapticsEnabled = useCallback((enabled: boolean) => {
+    paramsRef.current.hapticsEnabled = enabled;
     setHapticsEnabledState(enabled);
   }, []);
 
@@ -931,8 +985,7 @@ export function useMetronomeEngine() {
       lifecycleCleanupRef.current?.();
       lifecycleCleanupRef.current = null;
       engineRef.current?.close();
-      if (endTickTimeoutRef.current) clearTimeout(endTickTimeoutRef.current);
-      if (centerTickTimeoutRef.current) clearTimeout(centerTickTimeoutRef.current);
+      clearScheduledAccents();
       clearSessionPolling();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
