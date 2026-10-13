@@ -15,6 +15,7 @@ import { VIBE_GREETINGS } from '../../data/greetings';
 import type { CustomPreset } from '../../data/customPresets';
 import type { ApplyablePresetFields } from '../../hooks/useMetronomeEngine';
 import type { ChimeInterval, NoiseType, TickEarMode, TickSound, TickSubdivision } from '../../audio/binauralEngine';
+import { formatPanSplit } from '../../audio/dronePanning';
 
 interface ControlPanelProps {
   carrierHz: number;
@@ -229,14 +230,6 @@ const CHIME_INTERVAL_OPTIONS: { value: ChimeInterval; label: string; title: stri
   { value: null, label: 'Off', title: 'No interval chime' },
 ];
 
-/** Preview text for the current pan-modulation split at full swing, e.g.
- * "80/20" — mirrors exactly what the listener will hear at the extremes. */
-function splitPreviewLabel(depth: number): string {
-  const rightAtFullSwing = Math.round((0.5 + 0.5 * depth) * 100);
-  const leftAtFullSwing = 100 - rightAtFullSwing;
-  return `${leftAtFullSwing}/${rightAtFullSwing}`;
-}
-
 export function ControlPanel({
   carrierHz,
   beatHz,
@@ -430,7 +423,7 @@ export function ControlPanel({
       <CollapsibleGroup title="Beat & stereo" description="Tick placement and left/right motion">
         <div className="control-row-header">
           <span className="control-label">Tick ear</span>
-          <span className="control-value">{splitPreviewLabel(panModulationDepth)} at the extremes</span>
+          <span className="control-value">{formatPanSplit(panModulationDepth)} at the extremes</span>
         </div>
         <input
           type="range"
@@ -441,8 +434,8 @@ export function ControlPanel({
           onChange={(e) => onSetPanModulationDepth(Number(e.target.value))}
         />
         <p className="control-hint">
-          As the pendulum swings, the drone's L/R balance follows it. 0% keeps it always 50/50; 100% swings fully
-          between 100/0 and 0/100. The center is always 50/50.
+          The two binaural tones trade a constant total level as they follow the pendulum; the noise shield stays
+          centered. At 90/10, one tone gets 90% of the drone level and the other gets 10%. The center stays 50/50.
         </p>
         <div className="ear-mode-row" style={{ '--chip-color': BANDS[band].color } as React.CSSProperties}>
           {TICK_EAR_OPTIONS.map((opt) => (
