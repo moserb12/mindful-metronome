@@ -41,6 +41,7 @@
 
 import { pendulumEase } from '../engine/motion';
 import { recordAudioDiagnostic } from './audioDiagnostics';
+import { computeDroneEarGains } from './dronePanning';
 import { ScheduledAudioSourceRegistry } from './scheduledAudioSources';
 
 export type TickSound = 'soft' | 'wood' | 'kick' | 'hihat';
@@ -203,6 +204,44 @@ function buildBrownNoiseBuffer(context: AudioContext, seconds = 8): AudioBuffer 
   return buffer;
 }
 
+/** Encode a generated mono AudioBuffer as an ordinary WAV media resource.
+ * Chrome on Android grants durable media focus to a playing media element,
+ * while a MediaStream-backed element can be suspended after screen-off. The
+ * noise layer therefore enters the Web Audio graph through a real looping
+ * <audio> resource and anchors the Android notification/media session. */
+function audioBufferToWavBlob(buffer: AudioBuffer): Blob {
+  const samples = buffer.getChannelData(0);
+  const bytesPerSample = 2;
+  const dataLength = samples.length * bytesPerSample;
+  const wav = new ArrayBuffer(44 + dataLength);
+  const view = new DataView(wav);
+
+  const writeAscii = (offset: number, value: string) => {
+    for (let i = 0; i < value.length; i++) view.setUint8(offset + i, value.charCodeAt(i));
+  };
+
+  writeAscii(0, 'RIFF');
+  view.setUint32(4, 36 + dataLength, true);
+  writeAscii(8, 'WAVE');
+  writeAscii(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, buffer.sampleRate, true);
+  view.setUint32(28, buffer.sampleRate * bytesPerSample, true);
+  view.setUint16(32, bytesPerSample, true);
+  view.setUint16(34, 16, true);
+  writeAscii(36, 'data');
+  view.setUint32(40, dataLength, true);
+
+  for (let i = 0; i < samples.length; i++) {
+    const sample = Math.max(-1, Math.min(1, samples[i]));
+    view.setInt16(44 + i * bytesPerSample, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
+  }
+
+  return new Blob([wav], { type: 'audio/wav' });
+}
+
 /** Generates 8 seconds of "rainy forest" ambiance: a pink-noise bed (the
  * same Paul Kellet cascade as buildPinkNoiseBuffer, scaled down to ~40%
  * since it's a bed under the droplets, not the whole texture) plus
@@ -334,10 +373,8 @@ export class BinauralEngine {
 
   private oscLeft: OscillatorNode | null = null;
   private oscRight: OscillatorNode | null = null;
-  private noiseSource: AudioBufferSourceNode | null = null;
-  private readonly noiseBuffers: Record<NoiseType, AudioBuffer>;
-  private readonly outputElement: HTMLAudioElement;
-  private readonly outputStream: MediaStream;
+  private readonly noiseElement: HTMLAudioElement;
+  private readonly noiseUrls: Record<NoiseType, string>;
   private mediaElementPauseTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly scheduledTransientSources = new ScheduledAudioSourceRegistry();
 
@@ -372,22 +409,7 @@ export class BinauralEngine {
     this.masterGain = this.context.createGain();
     this.masterGain.gain.value = clamp01(initialParams.masterVolume);
     this.analyser.connect(this.masterGain);
-
-    // Feed the final mix to a real, open-ended MediaStream-backed audio
-    // element. Android then treats the session as live media (rather than
-    // showing an eight-second WAV timeline looping forever) while still
-    // granting the page media focus during screen-off playback.
-    const outputDestination = this.context.createMediaStreamDestination();
-    this.masterGain.connect(outputDestination);
-    this.outputStream = outputDestination.stream;
-    this.outputElement = new Audio();
-    this.outputElement.srcObject = this.outputStream;
-    this.outputElement.preload = 'auto';
-    this.outputElement.title = 'Mindful Metronome';
-    this.outputElement.hidden = true;
-    this.outputElement.setAttribute('aria-hidden', 'true');
-    this.outputElement.dataset.audioOutput = 'live';
-    document.body.appendChild(this.outputElement);
+    this.masterGain.connect(this.context.destination);
 
     this.droneGainLeft = this.context.createGain();
     this.droneGainRight = this.context.createGain();
@@ -407,7 +429,7 @@ export class BinauralEngine {
     this.noiseGain.gain.value = initialParams.noiseVolume;
     this.noiseGain.connect(this.analyser);
 
-    this.noiseBuffers = {
+    const noiseBuffers: Record<NoiseType, AudioBuffer> = {
       pink: buildPinkNoiseBuffer(this.context),
       white: buildWhiteNoiseBuffer(this.context),
       brown: buildBrownNoiseBuffer(this.context),
@@ -416,19 +438,32 @@ export class BinauralEngine {
       drippyCavern: buildDrippyCavernBuffer(this.context),
     };
 
+    this.noiseUrls = Object.fromEntries(
+      Object.entries(noiseBuffers).map(([type, buffer]) => [type, URL.createObjectURL(audioBufferToWavBlob(buffer))])
+    ) as Record<NoiseType, string>;
+    this.noiseElement = new Audio(this.noiseUrls[initialParams.noiseType]);
+    this.noiseElement.loop = true;
+    this.noiseElement.preload = 'auto';
+    this.noiseElement.title = 'Mindful Metronome';
+    this.noiseElement.hidden = true;
+    this.noiseElement.setAttribute('aria-hidden', 'true');
+    this.noiseElement.dataset.audioOutput = 'media-anchor';
+    document.body.appendChild(this.noiseElement);
+    this.context.createMediaElementSource(this.noiseElement).connect(this.noiseGain);
+
     this.context.addEventListener('statechange', () => {
       recordAudioDiagnostic('audio-context-state', { state: this.context.state, playing: this.playing });
     });
-    this.outputElement.addEventListener('loadedmetadata', () => {
+    this.noiseElement.addEventListener('loadedmetadata', () => {
       recordAudioDiagnostic('media-element-metadata', {
-        live: this.outputElement.duration === Infinity,
-        durationSec: Number.isFinite(this.outputElement.duration) ? this.outputElement.duration : null,
+        live: false,
+        durationSec: Number.isFinite(this.noiseElement.duration) ? this.noiseElement.duration : null,
       });
     });
-    this.outputElement.addEventListener('play', () => recordAudioDiagnostic('media-element-play'));
-    this.outputElement.addEventListener('pause', () => recordAudioDiagnostic('media-element-pause'));
-    this.outputElement.addEventListener('error', () => {
-      recordAudioDiagnostic('media-element-error', { code: this.outputElement.error?.code ?? null });
+    this.noiseElement.addEventListener('play', () => recordAudioDiagnostic('media-element-play'));
+    this.noiseElement.addEventListener('pause', () => recordAudioDiagnostic('media-element-pause'));
+    this.noiseElement.addEventListener('error', () => {
+      recordAudioDiagnostic('media-element-error', { code: this.noiseElement.error?.code ?? null });
     });
   }
 
@@ -474,8 +509,6 @@ export class BinauralEngine {
 
     this.oscLeft.start();
     this.oscRight.start();
-    this.noiseSource = this.createNoiseSource(this.params.noiseType);
-    this.noiseSource.start();
 
     this.applyDroneBalance();
     recordAudioDiagnostic('playback-start', { contextState: this.context.state });
@@ -490,18 +523,18 @@ export class BinauralEngine {
     if (this.context.state !== 'running' && this.context.state !== 'closed') {
       attempts.push(this.context.resume());
     }
-    if (this.playing && this.outputElement.paused) {
-      attempts.push(this.outputElement.play());
+    if (this.playing && this.noiseElement.paused) {
+      attempts.push(this.noiseElement.play());
     }
 
     const results = await Promise.allSettled(attempts);
     const succeeded = results.every((result) => result.status === 'fulfilled');
     recordAudioDiagnostic('playback-resume-attempt', {
       contextState: this.context.state,
-      mediaPaused: this.outputElement.paused,
+      mediaPaused: this.noiseElement.paused,
       succeeded,
     });
-    return succeeded && this.context.state === 'running' && !this.outputElement.paused;
+    return succeeded && this.context.state === 'running' && !this.noiseElement.paused;
   }
 
   /** Stop every audible layer, including one-shot ticks already committed
@@ -532,10 +565,8 @@ export class BinauralEngine {
     });
     this.oscLeft?.stop(stopAtSec);
     this.oscRight?.stop(stopAtSec);
-    this.noiseSource?.stop(stopAtSec);
     this.oscLeft = null;
     this.oscRight = null;
-    this.noiseSource = null;
 
     // Silence and cancel every tick/chime that was pre-scheduled during the
     // 30-second background window. Merely stopping BeatScheduler prevents
@@ -545,7 +576,8 @@ export class BinauralEngine {
     this.transientGateGain.gain.linearRampToValueAtTime(0, stopAtSec);
     const canceledTransientCount = this.cancelScheduledTransients(stopAtSec);
     this.mediaElementPauseTimer = setTimeout(() => {
-      this.outputElement.pause();
+      this.noiseElement.pause();
+      this.noiseElement.currentTime = 0;
       this.mediaElementPauseTimer = null;
     }, DRONE_STOP_RELEASE_SEC * 1000 + 5);
 
@@ -697,15 +729,14 @@ export class BinauralEngine {
     this.masterGain.gain.setTargetAtTime(this.params.masterVolume, this.context.currentTime, 0.03);
   }
 
-  /** Swap the generated looping texture while leaving the live output
-   * stream and its Android media session untouched. */
+  /** Swap the looping media resource behind the shared noise gain. The
+   * element itself stays connected so Android keeps one stable media
+   * session across texture changes. */
   setNoiseType(noiseType: NoiseType): void {
     this.params.noiseType = noiseType;
-    if (this.playing) {
-      this.noiseSource?.stop();
-      this.noiseSource = this.createNoiseSource(noiseType);
-      this.noiseSource.start();
-    }
+    this.noiseElement.src = this.noiseUrls[noiseType];
+    this.noiseElement.load();
+    if (this.playing) void this.resume();
   }
 
   setTickSound(tickSound: TickSound): void {
@@ -764,16 +795,15 @@ export class BinauralEngine {
   scheduleDroneSwing(fromPan: number, toPan: number, hangWeight: number, fromTimeSec: number, toTimeSec: number): void {
     const duration = toTimeSec - fromTimeSec;
     if (duration <= 0) return;
-    const total = clamp01(this.params.droneVolume);
     const leftCurve = new Float32Array(DRONE_SWING_CURVE_SAMPLES);
     const rightCurve = new Float32Array(DRONE_SWING_CURVE_SAMPLES);
     for (let i = 0; i < DRONE_SWING_CURVE_SAMPLES; i++) {
       const t = i / (DRONE_SWING_CURVE_SAMPLES - 1);
       const eased = pendulumEase(t, hangWeight);
       const panValue = clampPan(fromPan + (toPan - fromPan) * eased);
-      const rightShare = 0.5 + 0.5 * this.params.panModulationDepth * panValue;
-      leftCurve[i] = total * (1 - rightShare);
-      rightCurve[i] = total * rightShare;
+      const gains = computeDroneEarGains(panValue, this.params.panModulationDepth, this.params.droneVolume);
+      leftCurve[i] = gains.left;
+      rightCurve[i] = gains.right;
     }
     this.droneGainLeft.gain.setValueCurveAtTime(leftCurve, fromTimeSec, duration);
     this.droneGainRight.gain.setValueCurveAtTime(rightCurve, fromTimeSec, duration);
@@ -785,11 +815,9 @@ export class BinauralEngine {
   }
 
   private applyDroneBalance(): void {
-    const rightShare = 0.5 + 0.5 * this.params.panModulationDepth * this.lastPanValue;
-    const leftShare = 1 - rightShare;
-    const total = clamp01(this.params.droneVolume);
-    this.droneGainLeft.gain.setTargetAtTime(total * leftShare, this.context.currentTime, 0.05);
-    this.droneGainRight.gain.setTargetAtTime(total * rightShare, this.context.currentTime, 0.05);
+    const gains = computeDroneEarGains(this.lastPanValue, this.params.panModulationDepth, this.params.droneVolume);
+    this.droneGainLeft.gain.setTargetAtTime(gains.left, this.context.currentTime, 0.05);
+    this.droneGainRight.gain.setTargetAtTime(gains.right, this.context.currentTime, 0.05);
   }
 
   /** Which ear(s) the tick fires into, given `matchSide` — the ear the
@@ -889,14 +917,6 @@ export class BinauralEngine {
     this.fireTickOscillator(atTimeSec, 0, CENTER_TICK_GAIN_SCALE);
   }
 
-  private createNoiseSource(noiseType: NoiseType): AudioBufferSourceNode {
-    const source = this.context.createBufferSource();
-    source.buffer = this.noiseBuffers[noiseType];
-    source.loop = true;
-    source.connect(this.noiseGain);
-    return source;
-  }
-
   private trackTransientSource(source: AudioScheduledSourceNode): void {
     this.scheduledTransientSources.track(source);
   }
@@ -908,10 +928,11 @@ export class BinauralEngine {
   close(): void {
     this.stop();
     if (this.mediaElementPauseTimer) clearTimeout(this.mediaElementPauseTimer);
-    this.outputElement.pause();
-    this.outputElement.srcObject = null;
-    this.outputElement.remove();
-    this.outputStream.getTracks().forEach((track) => track.stop());
+    this.noiseElement.pause();
+    this.noiseElement.removeAttribute('src');
+    this.noiseElement.load();
+    this.noiseElement.remove();
+    Object.values(this.noiseUrls).forEach((url) => URL.revokeObjectURL(url));
     void this.context.close();
   }
 }
