@@ -11,17 +11,13 @@ import { SessionTimer } from './components/Metronome/SessionTimer';
 import { BilateralComingSoonBanner } from './components/BilateralComingSoonBanner';
 import { AccountPoll } from './components/AccountPoll';
 import { FocusDashboard } from './components/Dashboard/FocusDashboard';
-import { BANDS, PRESETS } from './data/bands';
+import { BANDS } from './data/bands';
 
 export default function App() {
   const engine = useMetronomeEngine();
   const customPresetsHook = useCustomPresets();
   const focusStats = useFocusStats(engine.isPlaying, engine.band);
   const bandInfo = BANDS[engine.band];
-  const activeBuiltInPreset = PRESETS.find(
-    (preset) =>
-      preset.carrierHz === engine.carrierHz && preset.beatHz === engine.beatHz && preset.bpm === engine.bpm
-  );
 
   /** "Just a big metronome" — collapses everything but the visual itself
    * and its play/pause control down to a full-viewport takeover with a
@@ -123,30 +119,9 @@ export default function App() {
         </div>
 
         <div className="stage-readout">
-          <div className="state-selector">
-            <select
-              className="state-badge"
-              value={activeBuiltInPreset?.id ?? ''}
-              onChange={(event) => {
-                const preset = PRESETS.find((candidate) => candidate.id === event.target.value);
-                if (preset) engine.applyPreset(preset);
-              }}
-              aria-label="Choose a state preset"
-              title="Choose a state preset"
-            >
-              {!activeBuiltInPreset && (
-                <option value="" disabled>
-                  {bandInfo.label} · {bandInfo.blurb}
-                </option>
-              )}
-              {PRESETS.map((preset) => (
-                <option key={preset.id} value={preset.id}>
-                  {BANDS[preset.id].label} · {BANDS[preset.id].blurb}
-                </option>
-              ))}
-            </select>
-            <span className="state-selector-chevron" aria-hidden="true">⌄</span>
-          </div>
+          <span className="state-badge">
+            {bandInfo.label} · {bandInfo.blurb}
+          </span>
           <button type="button" className={`play-toggle ${engine.isPlaying ? 'playing' : ''}`} onClick={engine.toggle}>
             {engine.isPlaying ? '❚❚ Pause' : '▶ Begin'}
           </button>

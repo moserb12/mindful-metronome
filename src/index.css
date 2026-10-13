@@ -843,36 +843,14 @@ select:hover {
   margin-top: 14px;
 }
 .state-badge {
-  appearance: none;
-  font-family: inherit;
   font-size: 0.82rem;
-  margin-top: 0;
-  padding: 7px 34px 7px 14px;
+  padding: 6px 14px;
   border-radius: 999px;
   border: 1px solid var(--band-color, #a78bfa);
   color: var(--band-color, #a78bfa);
   background: color-mix(in srgb, var(--band-color, #a78bfa) 12%, transparent);
-  cursor: pointer;
   transition: border-color var(--dur-slow) var(--ease-soft), color var(--dur-slow) var(--ease-soft),
-    background var(--dur-slow) var(--ease-soft), box-shadow var(--dur-base) var(--ease-soft);
-}
-.state-selector {
-  position: relative;
-  display: inline-flex;
-}
-.state-selector-chevron {
-  position: absolute;
-  right: 13px;
-  top: 50%;
-  color: var(--band-color, #a78bfa);
-  pointer-events: none;
-  transform: translateY(-56%);
-}
-.state-badge:hover,
-.state-badge:focus-visible {
-  background: color-mix(in srgb, var(--band-color, #a78bfa) 18%, transparent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--band-color, #a78bfa) 16%, transparent);
-  outline: none;
+    background var(--dur-slow) var(--ease-soft);
 }
 .play-toggle {
   background: var(--text);
