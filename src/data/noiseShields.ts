@@ -73,4 +73,11 @@ export const NOISE_SHIELDS: Record<NoiseType, NoiseShieldInfo> = {
   },
 };
 
-export const NOISE_SHIELD_ORDER: NoiseType[] = ['pink', 'white', 'brown', 'rainyForest', 'tinRoof', 'drippyCavern'];
+/** The three steady noise colors are the only user-selectable shields.
+ * The environmental textures remain in the engine/schema solely so an
+ * older saved setting or shared link can be read without breaking. */
+export const NOISE_SHIELD_ORDER: NoiseType[] = ['pink', 'white', 'brown'];
+
+export function normalizeNoiseShieldType(noiseType: NoiseType): NoiseType {
+  return NOISE_SHIELD_ORDER.includes(noiseType) ? noiseType : 'pink';
+}

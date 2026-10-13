@@ -724,6 +724,20 @@ export class BinauralEngine {
     this.params.panModulationDepth = clamp01(depth);
   }
 
+  /** Retract rhythm events that the lookahead scheduler already committed
+   * at or after a shared transition point. The continuous drone/noise stay
+   * alive; the caller immediately replaces these ticks and swing curves
+   * with a new tempo phase beginning at the same pendulum endpoint. */
+  clearScheduledRhythmAfter(transitionTimeSec: number): void {
+    this.droneGainLeft.gain.cancelScheduledValues(transitionTimeSec);
+    this.droneGainRight.gain.cancelScheduledValues(transitionTimeSec);
+    const canceledTransientCount = this.cancelScheduledTransients(transitionTimeSec);
+    recordAudioDiagnostic('rhythm-rescheduled', {
+      transitionTimeSec,
+      canceledTransientCount,
+    });
+  }
+
   /**
    * Pre-schedules the ENTIRE drone L/R balance curve for one swing
    * segment (one beat's worth of pendulum travel), sampling

@@ -77,6 +77,28 @@ describe('computeSwingSegment', () => {
     expect(seg.fromTimeSec).toBe(0.5);
     expect(seg.toTimeSec).toBe(1);
   });
+
+  it('finishes the current swing before adopting a pending tempo', () => {
+    const transitioningRef: SwingState = {
+      referenceTimeSec: 10,
+      referenceSide: 'left',
+      secondsPerBeat: 1,
+      next: { referenceTimeSec: 11, referenceSide: 'right', secondsPerBeat: 0.5 },
+    };
+
+    expect(computeSwingSegment(10.75, transitioningRef)).toEqual({
+      fromSide: 'left',
+      fromTimeSec: 10,
+      toSide: 'right',
+      toTimeSec: 11,
+    });
+    expect(computeSwingSegment(11.25, transitioningRef)).toEqual({
+      fromSide: 'right',
+      fromTimeSec: 11,
+      toSide: 'left',
+      toTimeSec: 11.5,
+    });
+  });
 });
 
 // ============================================================================
