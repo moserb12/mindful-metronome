@@ -1,5 +1,6 @@
 import { pendulumEase } from '../engine/motion';
 import type { TickEarMode, TickSound, TickSubdivision } from './binauralEngine';
+import { calibrateTickBuffer } from './volumeCalibration';
 
 export interface RhythmSettings {
   secondsPerBeat: number;
@@ -70,7 +71,7 @@ export function makeTickBuffer(context: BaseAudioContext, settings: RhythmSettin
       buffer.getChannelData(1)[index] += value * Math.sin((tick.pan + 1) * Math.PI / 4);
     }
   }
-  return buffer;
+  return calibrateTickBuffer(buffer, settings.tickSubdivision === 'CENTER');
 }
 
 /** Native looping sources keep going without any JavaScript timer refill.

@@ -10,6 +10,7 @@ import { ContinuousRhythm } from './continuousRhythm';
 import { crossfadeLoop } from './loopSeam';
 import { mixHeadroom } from './mixHeadroom';
 import { scheduleSessionGate } from './sessionEnvelope';
+import { calibrateNoiseBuffer } from './volumeCalibration';
 import { ScheduledAudioSourceRegistry } from './scheduledAudioSources';
 
 export type TickSound = 'soft' | 'wood' | 'kick' | 'hihat';
@@ -83,7 +84,7 @@ function clamp01(v: number): number {
  * same filter cascade used by countless Web Audio noise generators). Pink
  * noise, unlike white, has equal energy per octave, which reads as much
  * softer/warmer texture to the ear. */
-function buildPinkNoiseBuffer(context: AudioContext, seconds = 8): AudioBuffer {
+export function buildPinkNoiseBuffer(context: AudioContext, seconds = 8): AudioBuffer {
   const bufferSize = context.sampleRate * seconds;
   const buffer = context.createBuffer(1, bufferSize, context.sampleRate);
   const output = buffer.getChannelData(0);
@@ -114,7 +115,7 @@ function buildPinkNoiseBuffer(context: AudioContext, seconds = 8): AudioBuffer {
  * chosen by matching RMS against buildPinkNoiseBuffer's output (both land
  * within ~1% of each other), not eyeballed — so switching shield type
  * mid-session doesn't jump in perceived loudness. */
-function buildWhiteNoiseBuffer(context: AudioContext, seconds = 8): AudioBuffer {
+export function buildWhiteNoiseBuffer(context: AudioContext, seconds = 8): AudioBuffer {
   const bufferSize = context.sampleRate * seconds;
   const buffer = context.createBuffer(1, bufferSize, context.sampleRate);
   const output = buffer.getChannelData(0);
@@ -129,7 +130,7 @@ function buildWhiteNoiseBuffer(context: AudioContext, seconds = 8): AudioBuffer 
  * distant rumble. `leak`/`scale` were tuned together (same RMS-matching
  * process as buildWhiteNoiseBuffer) so this lands at the same loudness as
  * pink and white despite the very different generation method. */
-function buildBrownNoiseBuffer(context: AudioContext, seconds = 8): AudioBuffer {
+export function buildBrownNoiseBuffer(context: AudioContext, seconds = 8): AudioBuffer {
   const bufferSize = context.sampleRate * seconds;
   const buffer = context.createBuffer(1, bufferSize, context.sampleRate);
   const output = buffer.getChannelData(0);
@@ -369,9 +370,9 @@ export class BinauralEngine {
     this.noiseGain.connect(this.analyser);
 
     const noiseBuffers: Record<NoiseType, AudioBuffer> = {
-      pink: buildPinkNoiseBuffer(this.context),
-      white: buildWhiteNoiseBuffer(this.context),
-      brown: buildBrownNoiseBuffer(this.context),
+      pink: calibrateNoiseBuffer(buildPinkNoiseBuffer(this.context)),
+      white: calibrateNoiseBuffer(buildWhiteNoiseBuffer(this.context)),
+      brown: calibrateNoiseBuffer(buildBrownNoiseBuffer(this.context)),
       rainyForest: buildRainyForestBuffer(this.context),
       tinRoof: buildTinRoofBuffer(this.context),
       drippyCavern: buildDrippyCavernBuffer(this.context),
