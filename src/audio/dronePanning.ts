@@ -21,8 +21,9 @@ export function formatPanSplit(depth: number): string {
  * Calculate the independent gain for the two permanently separated drone
  * tones. A depth of 0.8 is labelled 90/10 and produces a 0.9/0.1 split at
  * the extremes. The two gains always sum to the selected drone volume, so
- * the stereo motion delivers each frequency independently without creating
- * a second loudness pulse.
+ * the stereo motion delivers each frequency independently. Constant-sum
+ * amplitude is the existing balance law, not constant acoustic power or a
+ * guarantee of constant perceived loudness.
  */
 export function computeDroneEarGains(panValue: number, depth: number, droneVolume: number): DroneEarGains {
   const pan = clamp(panValue, -1, 1);

@@ -18,6 +18,8 @@ import type { ChimeInterval, NoiseType, TickEarMode, TickSound, TickSubdivision 
 import { formatPanSplit } from '../../audio/dronePanning';
 
 interface ControlPanelProps {
+  isPlaying: boolean;
+  onTestHeadphoneChannel: (side: 'left' | 'right') => Promise<boolean>;
   carrierHz: number;
   beatHz: number;
   bpm: number;
@@ -231,6 +233,8 @@ const CHIME_INTERVAL_OPTIONS: { value: ChimeInterval; label: string; title: stri
 ];
 
 export function ControlPanel({
+  isPlaying,
+  onTestHeadphoneChannel,
   carrierHz,
   beatHz,
   bpm,
@@ -263,6 +267,7 @@ export function ControlPanel({
   onSaveCustomPreset,
   onDeleteCustomPreset,
 }: ControlPanelProps) {
+  const [channelCheckStatus, setChannelCheckStatus] = useState('');
   const band = classifyBeatFrequency(beatHz);
   const activeShield = NOISE_SHIELDS[noiseType];
   // Feature-detected here (not passed as a prop) since it's a pure browser
@@ -422,7 +427,7 @@ export function ControlPanel({
 
       <CollapsibleGroup title="Beat & stereo" description="Tick placement and left/right motion">
         <div className="control-row-header">
-          <span className="control-label">Tick ear</span>
+          <span className="control-label">Binaural swing</span>
           <span className="control-value">{formatPanSplit(panModulationDepth)} at the extremes</span>
         </div>
         <input
@@ -430,13 +435,32 @@ export function ControlPanel({
           min={0}
           max={1}
           step={0.01}
+          aria-label="Binaural swing width"
           value={panModulationDepth}
           onChange={(e) => onSetPanModulationDepth(Number(e.target.value))}
         />
         <p className="control-hint">
-          The two binaural tones trade a constant total level as they follow the pendulum; the noise shield stays
-          centered. At 90/10, one tone gets 90% of the drone level and the other gets 10%. The center stays 50/50.
+          Left: {carrierHz.toFixed(1)} Hz. Right: {(carrierHz + beatHz).toFixed(1)} Hz. Each tone stays in its own
+          ear; only its volume follows the pendulum. At 90/10 the levels trade 90% and 10%, meeting at 50/50.
+          Set the width to 50/50 for steady tones. Stereo headphones are required; turn off mono audio.
         </p>
+        <div className="ear-mode-row">
+          {(['left', 'right'] as const).map(side => (
+            <button key={side} type="button" className="ear-mode-btn" disabled={isPlaying}
+              onClick={() => {
+                void onTestHeadphoneChannel(side).then(ok => setChannelCheckStatus(ok
+                  ? `Played a one-second tone in the ${side} ear only.`
+                  : 'Could not play the check. Pause the session and try again.'));
+              }}>
+              Test {side} ear
+            </button>
+          ))}
+        </div>
+        <p className="control-hint" role="status">
+          {isPlaying ? 'Pause to check your headphones.' : channelCheckStatus ||
+            'Each check should be audible in only the named ear. Start at a comfortable headphone volume.'}
+        </p>
+        <span className="control-label">Tick ear</span>
         <div className="ear-mode-row" style={{ '--chip-color': BANDS[band].color } as React.CSSProperties}>
           {TICK_EAR_OPTIONS.map((opt) => (
             <button
@@ -483,7 +507,7 @@ export function ControlPanel({
           ))}
         </div>
         <p className="control-hint">
-          A soft escalating chime (1 ring, then 2, then 3...) marking elapsed play time. Resets to expecting one ring
+          A soft escalating chime (1 ring, then 2, then 3... up to 12) marking elapsed play time. Resets to expecting one ring
           every time you pause or stop.
         </p>
         {hapticsSupported && (

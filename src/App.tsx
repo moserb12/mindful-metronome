@@ -141,6 +141,8 @@ export default function App() {
             <AcousticVisualizer isPlaying={engine.isPlaying} getAnalyser={engine.getAnalyser} bandColor={bandInfo.color} />
 
             <ControlPanel
+              isPlaying={engine.isPlaying}
+              onTestHeadphoneChannel={engine.testHeadphoneChannel}
               carrierHz={engine.carrierHz}
               beatHz={engine.beatHz}
               bpm={engine.bpm}

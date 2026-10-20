@@ -16,24 +16,11 @@ import { recordAudioDiagnostic } from '../audio/audioDiagnostics';
 import { loadSettings, saveSettings } from '../storage/settingsStorage';
 import { decodeSettingsFromSearchParams, encodeSettingsToSearchParams, hasAnyCoreTuningParams } from '../urlState';
 
-/** How far ahead the audio scheduler commits real tick oscillators while
- * the tab is VISIBLE. Small on purpose: every beat inside this window is
- * already locked into the Web Audio graph (its tickSound/tickSubdivision
- * baked in at scheduling time) and can't be changed retroactively, so
- * this window is also the worst-case delay before a "Sound effect" or
- * "Beat pattern" change is actually audible. Comfortably above
- * SCHEDULER_TICK_MS (25ms) and the ~0.15s first-beat offset in start()
- * below, with a little headroom for a slow frame. */
+/** The page scheduler now drives UI/haptics and optional interval chimes.
+ * Core tones, swing, and ticks run continuously on the audio thread. */
 const FOREGROUND_LOOKAHEAD_SEC = 0.2;
-/** How far ahead beats get scheduled once the tab is HIDDEN — swapped in
- * automatically via the visibilitychange listener in start() below.
- * Browsers throttle setInterval in hidden tabs (commonly clamped to a 1s
- * minimum), and BeatScheduler only refills its queue when its own timer
- * actually fires, so a hidden tab needs a much bigger buffer already
- * committed to survive the gap between ticks without running dry. A
- * background tab isn't where anyone's actively tweaking Sound
- * effect/Beat pattern anyway, so the latency tradeoff only applies when
- * it can't be felt. */
+/** Best-effort lookahead for optional chimes and accents while hidden.
+ * It is no longer a buffer that sustained playback can exhaust. */
 const BACKGROUND_SAFE_LOOKAHEAD_SEC = 30;
 
 /** Debounce window for saving settings to localStorage — range inputs fire
@@ -346,6 +333,7 @@ export function useMetronomeEngine() {
         tickSound: paramsRef.current.tickSound,
         panModulationDepth: paramsRef.current.panModulationDepth,
         tickEarMode: paramsRef.current.tickEarMode,
+        tickSubdivision: paramsRef.current.tickSubdivision,
       });
     }
     return engineRef.current;
@@ -379,6 +367,14 @@ export function useMetronomeEngine() {
     scheduledAccentTimeoutsRef.current.set(timeout, scheduledTimeSec);
   }
 
+  function startNativeRhythm(engine: BinauralEngine, at: number, side: 'left' | 'right') {
+    const mood = MOOD_BY_BAND[classifyBeatFrequency(paramsRef.current.beatHz)];
+    const tempoT = (paramsRef.current.bpm - MIN_BPM) / (MAX_BPM - MIN_BPM);
+    const hang = clamp(mood.easeHangTime - 0.35 * tempoT, 0.05, 0.95);
+    engine.scheduleDroneSwing(side === 'left' ? -1 : 1, side === 'left' ? 1 : -1,
+      hang, at, at + 60 / paramsRef.current.bpm);
+  }
+
   /**
    * `tickSubdivision` (see TickSubdivision in binauralEngine.ts) decides
    * TWO independent things every beat: which tick(s) are actually AUDIBLE
@@ -400,40 +396,9 @@ export function useMetronomeEngine() {
     const playsEnd = subdivision !== 'CENTER';
     const playsCenter = subdivision !== 'ENDS';
 
-    if (playsEnd) engine.playTick(side, beat.timeSec);
-    if (playsCenter) engine.playCenterTick(centerTimeSec);
-
-    // Pre-schedule the drone's L/R swing curve for the segment THIS beat
-    // starts (side -> opposite side, ending at the next beat) — see
-    // BinauralEngine.scheduleDroneSwing()'s doc comment for why this
-    // replaced pushing panValue every requestAnimationFrame from the
-    // visual: rAF is throttled to near-zero (or fully paused) in a
-    // backgrounded tab, which used to freeze the drone's stereo balance
-    // entirely instead of continuing to oscillate. Scheduling it here,
-    // from the same trigger that already reliably schedules ticks in the
-    // background, makes it genuinely audio-graph-native and immune to
-    // that throttling. hangWeight mirrors the visual's own formula
-    // exactly (mood.easeHangTime blended with live tempo).
-    const band = classifyBeatFrequency(paramsRef.current.beatHz);
-    const mood = MOOD_BY_BAND[band];
-    const tempoT = (paramsRef.current.bpm - MIN_BPM) / (MAX_BPM - MIN_BPM);
-    const hangWeight = clamp(mood.easeHangTime - 0.35 * tempoT, 0.05, 0.95);
-    const toSide = oppositeSide(side);
-    engine.scheduleDroneSwing(
-      side === 'left' ? -1 : 1,
-      toSide === 'left' ? -1 : 1,
-      hangWeight,
-      beat.timeSec,
-      beat.timeSec + secondsPerBeat
-    );
-
-    // Interval chime — mirrors scheduleDroneSwing's precedent exactly:
-    // pre-scheduled from the same reliably-background-safe trigger, never
-    // a poll or requestAnimationFrame. Elapsed PLAY time is measured
-    // against playStartTimeSecRef (seeded once in start()), so a mid-play
-    // BPM change never distorts which minute mark is "next" the way
-    // counting elapsed BEATS would. Up to one beat's lateness on a
-    // 15-60 minute marker is fine — no need for finer precision.
+    // Core audio loops independently of this scheduler. This callback only
+    // drives accents and optional chimes; OS timer suspension can delay
+    // those extras, but cannot exhaust the drone/swing/tick playback queue.
     const chimeInterval = paramsRef.current.chimeInterval;
     if (chimeInterval && playStartTimeSecRef.current !== null) {
       const elapsedSec = beat.timeSec - playStartTimeSecRef.current;
@@ -531,8 +496,7 @@ export function useMetronomeEngine() {
     if (phase.phase === 'fading' && !sessionFiredFadeRef.current) {
       sessionFiredFadeRef.current = true;
       setSessionPhase('fading');
-      engine.beginSessionFadeOut(session.fadeDurationSec);
-      engine.playClosingChime();
+      // Fade and closing chime were already armed on the native audio clock.
     }
 
     if (phase.phase === 'ended' && !sessionFiredEndRef.current) {
@@ -593,20 +557,13 @@ export function useMetronomeEngine() {
     // visual's reference point to that same first beat so the swing and
     // the audio ticks can never disagree about which side is "now".
     swingRef.current = { referenceTimeSec: firstBeatAtSec, referenceSide: 'left', secondsPerBeat: 60 / paramsRef.current.bpm };
+    startNativeRhythm(engine, firstBeatAtSec, 'left');
     // The interval chime's elapsed-time reference — see handleBeatScheduled.
     playStartTimeSecRef.current = firstBeatAtSec;
     nextChimeMarkRef.current = 1;
 
-    // Small while the tab is visible — see FOREGROUND_LOOKAHEAD_SEC's doc
-    // comment for why: every beat inside this window is already
-    // irrevocably committed to the audio graph, so it's also the
-    // worst-case delay before a Sound effect/Beat pattern change is
-    // actually heard. Swapped to the much larger BACKGROUND_SAFE_LOOKAHEAD_SEC
-    // automatically the instant the tab is hidden (browsers throttle
-    // setInterval there, commonly to a 1s minimum, and the scheduler only
-    // refills its queue when its own timer fires — the small foreground
-    // window would run dry within ~100ms of losing focus), and back down
-    // the instant it's visible again.
+    // Keep optional accents/chimes ahead of the hardware clock. The
+    // sustained audio has already started and does not depend on this timer.
     const scheduler = new BeatScheduler(
       () => engine.context.currentTime,
       paramsRef.current.bpm,
@@ -666,6 +623,7 @@ export function useMetronomeEngine() {
     const minutes = sessionDurationMinutesRef.current;
     if (minutes !== null) {
       sessionRef.current = { startTimeSec: engine.context.currentTime, durationSec: minutes * 60, fadeDurationSec: SESSION_FADE_DURATION_SEC };
+      engine.scheduleSessionEnd(minutes * 60, SESSION_FADE_DURATION_SEC);
       setSessionPhase('active');
       setSessionRemainingSec(minutes * 60);
       sessionPollIntervalRef.current = setInterval(pollSession, SESSION_POLL_INTERVAL_MS);
@@ -749,6 +707,7 @@ export function useMetronomeEngine() {
       setSessionRemainingSec(null);
     } else {
       sessionRef.current = { startTimeSec: engine.context.currentTime, durationSec: minutes * 60, fadeDurationSec: SESSION_FADE_DURATION_SEC };
+      engine.scheduleSessionEnd(minutes * 60, SESSION_FADE_DURATION_SEC);
       setSessionPhase('active');
       setSessionRemainingSec(minutes * 60);
       sessionPollIntervalRef.current = setInterval(pollSession, SESSION_POLL_INTERVAL_MS);
@@ -764,7 +723,14 @@ export function useMetronomeEngine() {
   const setBeatHz = useCallback((hz: number) => {
     paramsRef.current.beatHz = hz;
     setBeatHzState(hz);
-    engineRef.current?.setFrequencies(paramsRef.current.carrierHz, hz);
+    const engine = engineRef.current;
+    engine?.setFrequencies(paramsRef.current.carrierHz, hz);
+    // Band changes also affect visual easing, even at an unchanged BPM.
+    if (engine && swingRef.current && isPlayingIntentRef.current) {
+      const segment = computeSwingSegment(engine.context.currentTime, swingRef.current);
+      engine.clearScheduledRhythmAfter(segment.toTimeSec);
+      startNativeRhythm(engine, segment.toTimeSec, segment.toSide);
+    }
   }, []);
 
   const setBpm = useCallback((next: number) => {
@@ -796,6 +762,7 @@ export function useMetronomeEngine() {
 
       scheduler.stop();
       engine.clearScheduledRhythmAfter(transitionTimeSec);
+      startNativeRhythm(engine, transitionTimeSec, segment.toSide);
       clearScheduledAccents(transitionTimeSec);
       scheduler.setBpm(next);
       scheduler.start(transitionTimeSec, segment.toSide === 'left' ? 0 : 1);
@@ -851,15 +818,14 @@ export function useMetronomeEngine() {
     engineRef.current?.setTickEarMode(mode);
   }, []);
 
-  // No engine call — BinauralEngine never holds this value, it's read
-  // straight from paramsRef inside handleBeatScheduled every beat.
+  // Update the native tick loop without changing its phase.
   const setTickSubdivision = useCallback((subdivision: TickSubdivision) => {
     paramsRef.current.tickSubdivision = subdivision;
     setTickSubdivisionState(subdivision);
+    engineRef.current?.setTickSubdivision(subdivision);
   }, []);
 
-  // Same reasoning as setTickSubdivision above — read fresh from
-  // paramsRef inside handleBeatScheduled, no engine call here.
+  // Optional chimes are read by the page scheduler.
   const setChimeInterval = useCallback((interval: ChimeInterval) => {
     paramsRef.current.chimeInterval = interval;
     setChimeIntervalState(interval);
@@ -1017,6 +983,7 @@ export function useMetronomeEngine() {
     sessionRef,
     getAnalyser: () => engineRef.current?.analyser ?? null,
     getAudioTimeSec: () => engineRef.current?.context.currentTime ?? 0,
+    testHeadphoneChannel: (side: 'left' | 'right') => ensureEngine().testHeadphoneChannel(side),
     toggle,
     setCarrierHz,
     setBeatHz,

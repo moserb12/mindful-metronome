@@ -1,47 +1,15 @@
-// ============================================================================
-// BinauralEngine — the audio heart of Mindful Metronome.
-//
-// Three independent layers, each real Web Audio, each routed through its
-// own GainNode (per-channel volume, same principle Brain Bridging Beats
-// uses for its feedback channels: a listener should be able to bring any
-// one layer down to zero without touching the others):
-//
-//   - DRONE: a continuous binaural pair — one sine in each ear, offset by
-//     `beatHz`. The brain never actually receives that difference tone; it's
-//     synthesized in the auditory brainstem from two real, steady pitches.
-//     This is the "flow state" background layer. The LEFT and RIGHT
-//     oscillators are each panned hard to their own ear permanently — that
-//     fixed separation is what makes the beat perceivable at all — but
-//     each has its OWN gain, with native automation curves scheduled ahead
-//     to follow the pendulum's live position (see scheduleDroneSwing()).
-//     The two gains always sum to `droneVolume`, so the total loudness
-//     stays constant; only the LR balance moves.
-//   - TICK: short, percussive ticks fired once per beat by a BeatScheduler
-//     (src/engine/timing.ts) at a precise AudioContext time. Which ear (or
-//     both) a tick fires into is controlled by `tickEarMode` — see
-//     resolveTickPan() below.
-//   - NOISE SHIELD: a quiet ambience layer behind both, panned center.
-//     Selectable between pink/white/brown (see NoiseType) — see
-//     buildPinkNoiseBuffer/buildWhiteNoiseBuffer/buildBrownNoiseBuffer for
-//     how each is synthesized, and their scaling constants (chosen by
-//     matching RMS/peak across all three, not eyeballed) for why switching
-//     type mid-session doesn't jump in loudness.
-//
-// All three channel gains feed the shared `analyser` (so the acoustic
-// visualizer always sees the true combined mix), and analyser output then
-// passes through ONE final `masterGain` before the destination — an overall
-// trim on top of the mix, not a substitute for the per-channel gains above.
-// Turning master down still leaves each channel's own balance untouched;
-// turning it back up restores the exact mix that was there before.
-//
-// Nothing in this file assumes React or the DOM beyond the Web Audio API
-// and StereoPannerNode; src/hooks/useMetronomeEngine.ts is the thin React
-// wrapper around it.
-// ============================================================================
+// Independent mono binaural tones -> explicit stereo merger -> analyser.
+// Pendulum gain modulation and ticks loop on the audio rendering thread;
+// no page timer is required to keep those layers playing. The real media
+// element remains the noise source/media-focus anchor. OS interruption can
+// still suspend rendering; lifecycle recovery is best effort.
 
-import { pendulumEase } from '../engine/motion';
 import { recordAudioDiagnostic } from './audioDiagnostics';
-import { computeDroneEarGains } from './dronePanning';
+import { BinauralVoice } from './binauralVoice';
+import { ContinuousRhythm } from './continuousRhythm';
+import { crossfadeLoop } from './loopSeam';
+import { mixHeadroom } from './mixHeadroom';
+import { scheduleSessionGate } from './sessionEnvelope';
 import { ScheduledAudioSourceRegistry } from './scheduledAudioSources';
 
 export type TickSound = 'soft' | 'wood' | 'kick' | 'hihat';
@@ -61,32 +29,12 @@ export type NoiseType = 'pink' | 'white' | 'brown' | 'rainyForest' | 'tinRoof' |
  * unlike TickSubdivision's always-on default. See playIntervalChime(). */
 export type ChimeInterval = 15 | 30 | 45 | 60 | null;
 
-/** How a tick's stereo placement relates to the drone's live L/R balance:
- *   - MATCH: fires in whichever ear the pendulum just arrived at — the ear
- *     the drone is CURRENTLY favoring (its gain share is highest there).
- *   - OPPOSITE: fires in the other ear — the one the drone is currently
- *     quietest in. A call-and-response between the two layers.
- *   - BOTH: fires centered, equally in both ears, regardless of the
- *     pendulum's position. */
+/** Placement of the tick only; the two drone tones never switch ears. */
 export type TickEarMode = 'MATCH' | 'OPPOSITE' | 'BOTH';
 
-/** WHEN ticks fire relative to the pendulum's swing cycle — orthogonal to
- * TickEarMode above (WHICH EAR a tick is routed to). 'ENDS' is today's
- * exact original behavior: a tick only when the pendulum arrives at a
- * side. The center/"&" tick this adds ALWAYS fires dead-center (pan 0)
- * regardless of TickEarMode — see playCenterTick(). Lives entirely in
- * scheduling (useMetronomeEngine.ts's handleBeatScheduled), not in
- * MetronomeParams — BinauralEngine itself never needs to know the current
- * pattern, only how to play an end-tick or a center-tick when told to. */
+/** Tick pattern baked into the native two-beat audio loop. */
 export type TickSubdivision = 'ENDS' | 'ENDS_AND_CENTER' | 'CENTER';
 
-/** Gain scale applied to the center/"&" tick relative to the main tick's
- * own peak gain — confirmed with the builder: quieter (~50-60%) so the
- * downbeat still reads as primary, kept at this SAME scale in every
- * tickSubdivision mode (including CENTER-only) for one consistent,
- * recognizable subdivision-click character rather than "turned up to
- * compensate" when it's the only sound playing. */
-const CENTER_TICK_GAIN_SCALE = 0.55;
 
 /** Extra time, past each tickSound's own decay, spent linearly ramping
  * the gain the rest of the way down to an exact 0 before the oscillator
@@ -103,12 +51,6 @@ const TICK_RELEASE_TAIL_SEC = 0.005;
  * click-free stop regardless of waveform phase. */
 const DRONE_STOP_RELEASE_SEC = 0.03;
 
-/** How many points sample pendulumEase()'s curve per scheduled swing
- * segment in scheduleDroneSwing() — enough to render the eased shape
- * smoothly (Web Audio linearly interpolates BETWEEN curve samples) at
- * any tempo this app supports, without generating an excessive number of
- * automation points every beat. */
-const DRONE_SWING_CURVE_SAMPLES = 24;
 
 /** Duration of one chime tone, and the gap after it before the next one
  * in the same escalating ring — see playIntervalChime(). */
@@ -129,15 +71,13 @@ export interface MetronomeParams {
    * other. 0.6 lands on an 80/20 <-> 20/80 swing. See scheduleDroneSwing(). */
   panModulationDepth: number;
   tickEarMode: TickEarMode;
+  tickSubdivision: TickSubdivision;
 }
 
 function clamp01(v: number): number {
   return Math.min(1, Math.max(0, v));
 }
 
-function clampPan(v: number): number {
-  return Math.min(1, Math.max(-1, v));
-}
 
 /** Generates a buffer of pink noise (Paul Kellet's refined method — the
  * same filter cascade used by countless Web Audio noise generators). Pink
@@ -210,7 +150,7 @@ function buildBrownNoiseBuffer(context: AudioContext, seconds = 8): AudioBuffer 
  * noise layer therefore enters the Web Audio graph through a real looping
  * <audio> resource and anchors the Android notification/media session. */
 function audioBufferToWavBlob(buffer: AudioBuffer): Blob {
-  const samples = buffer.getChannelData(0);
+  const samples = crossfadeLoop(buffer.getChannelData(0), buffer.sampleRate * 0.1);
   const bytesPerSample = 2;
   const dataLength = samples.length * bytesPerSample;
   const wav = new ArrayBuffer(44 + dataLength);
@@ -371,17 +311,15 @@ export class BinauralEngine {
   readonly context: AudioContext;
   readonly analyser: AnalyserNode;
 
-  private oscLeft: OscillatorNode | null = null;
-  private oscRight: OscillatorNode | null = null;
+  private voice: BinauralVoice | null = null;
+  private channelProbe: BinauralVoice | null = null;
+  private rhythm: ContinuousRhythm | null = null;
+  private readonly retiringRhythms = new Set<ContinuousRhythm>();
   private readonly noiseElement: HTMLAudioElement;
   private readonly noiseUrls: Record<NoiseType, string>;
   private mediaElementPauseTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly scheduledTransientSources = new ScheduledAudioSourceRegistry();
 
-  /** Per-ear drone gain, so the L/R balance can move independently of the
-   * master droneVolume. Their values always sum to droneVolume. */
-  private readonly droneGainLeft: GainNode;
-  private readonly droneGainRight: GainNode;
   private readonly tickGain: GainNode;
   private readonly noiseGain: GainNode;
   private readonly transientGateGain: GainNode;
@@ -389,17 +327,22 @@ export class BinauralEngine {
    * — see the file-level comment for why this doesn't replace the
    * per-channel gains above. */
   private readonly masterGain: GainNode;
+  private readonly headroomGain: GainNode;
+  private readonly sessionGain: GainNode;
+  private readonly closingSources = new ScheduledAudioSourceRegistry();
+  private closingGain: GainNode | null = null;
 
   private params: MetronomeParams;
   private playing = false;
-  /** Most recent pendulum position, -1 (full left) to 1 (full right).
-   * Retained so setVolumes()/setPanModulationDepth() can immediately
-   * reapply the correct balance without waiting for the next animation
-   * next scheduled automation curve. */
-  private lastPanValue = 0;
 
   constructor(initialParams: MetronomeParams) {
     const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    // Safari's playback category requests background/media behavior where
+    // implemented. It is a request, not an exemption from OS suspension.
+    const audioSession = (navigator as Navigator & { audioSession?: { type: string } }).audioSession;
+    if (audioSession) {
+      try { audioSession.type = 'playback'; } catch { /* Unsupported category. */ }
+    }
     this.context = new AudioCtx();
     this.params = initialParams;
 
@@ -408,15 +351,11 @@ export class BinauralEngine {
 
     this.masterGain = this.context.createGain();
     this.masterGain.gain.value = clamp01(initialParams.masterVolume);
-    this.analyser.connect(this.masterGain);
-    this.masterGain.connect(this.context.destination);
-
-    this.droneGainLeft = this.context.createGain();
-    this.droneGainRight = this.context.createGain();
-    this.droneGainLeft.gain.value = initialParams.droneVolume / 2;
-    this.droneGainRight.gain.value = initialParams.droneVolume / 2;
-    this.droneGainLeft.connect(this.analyser);
-    this.droneGainRight.connect(this.analyser);
+    this.headroomGain = this.context.createGain();
+    this.headroomGain.gain.value = mixHeadroom(initialParams.droneVolume, initialParams.tickVolume, initialParams.noiseVolume);
+    this.analyser.connect(this.headroomGain).connect(this.masterGain);
+    this.sessionGain = this.context.createGain();
+    this.masterGain.connect(this.sessionGain).connect(this.context.destination);
 
     this.tickGain = this.context.createGain();
     this.tickGain.gain.value = initialParams.tickVolume;
@@ -471,12 +410,37 @@ export class BinauralEngine {
     return this.playing;
   }
 
+  /** A quiet, one-second probe through the same stereo voice/output graph.
+   * No settings change and no media playback session is started. */
+  async testHeadphoneChannel(side: 'left' | 'right'): Promise<boolean> {
+    if (this.playing) return false;
+    try {
+      await this.context.resume();
+      if (this.playing) return false;
+      this.cancelSessionFade();
+      const now = this.context.currentTime;
+      this.channelProbe?.stop(now + 0.03);
+      const probe = new BinauralVoice(this.context, this.analyser);
+      probe.start(this.params.carrierHz, this.params.beatHz, 0.3, 0);
+      (side === 'left' ? probe.rightLevel : probe.leftLevel).gain.value = 0;
+      probe.stop(now + 1, now + 0.97, 0.3);
+      this.channelProbe = probe;
+      recordAudioDiagnostic('headphone-channel-test', { side });
+      return true;
+    } catch {
+      recordAudioDiagnostic('headphone-channel-test-failed', { side });
+      return false;
+    }
+  }
+
   /** Start the continuous drone + noise shield. Must be called from a real
    * user gesture (browsers block AudioContext otherwise) — the caller
    * should also `resume()` a suspended context first. Idempotent: calling
    * twice in a row while already playing is a no-op. */
   start(): void {
     if (this.playing) return;
+    this.channelProbe?.stop(this.context.currentTime + 0.03);
+    this.channelProbe = null;
     this.playing = true;
     if (this.mediaElementPauseTimer) {
       clearTimeout(this.mediaElementPauseTimer);
@@ -487,31 +451,22 @@ export class BinauralEngine {
     // playthroughs, so every fresh start must restore the mix before the
     // new sources begin (including a rapid stop/start during the 30ms fade).
     const now = this.context.currentTime;
-    [this.droneGainLeft, this.droneGainRight, this.noiseGain, this.transientGateGain].forEach((gainNode) => {
+    this.sessionGain.gain.cancelScheduledValues(now);
+    this.sessionGain.gain.setValueAtTime(1, now);
+    [this.noiseGain, this.transientGateGain].forEach((gainNode) => {
       gainNode.gain.cancelScheduledValues(now);
     });
     this.noiseGain.gain.setValueAtTime(clamp01(this.params.noiseVolume), now);
     this.transientGateGain.gain.setValueAtTime(1, now);
 
-    this.oscLeft = this.context.createOscillator();
-    this.oscLeft.type = 'sine';
-    this.oscLeft.frequency.value = this.params.carrierHz;
-    const panLeft = this.context.createStereoPanner();
-    panLeft.pan.value = -1;
-    this.oscLeft.connect(panLeft).connect(this.droneGainLeft);
-
-    this.oscRight = this.context.createOscillator();
-    this.oscRight.type = 'sine';
-    this.oscRight.frequency.value = this.params.carrierHz + this.params.beatHz;
-    const panRight = this.context.createStereoPanner();
-    panRight.pan.value = 1;
-    this.oscRight.connect(panRight).connect(this.droneGainRight);
-
-    this.oscLeft.start();
-    this.oscRight.start();
-
-    this.applyDroneBalance();
-    recordAudioDiagnostic('playback-start', { contextState: this.context.state });
+    this.voice = new BinauralVoice(this.context, this.analyser);
+    this.voice.start(this.params.carrierHz, this.params.beatHz, this.params.droneVolume, this.params.panModulationDepth);
+    recordAudioDiagnostic('playback-start', {
+      contextState: this.context.state,
+      routing: 'independent-mono-to-stereo-merger',
+      leftHz: this.params.carrierHz,
+      rightHz: this.params.carrierHz + this.params.beatHz,
+    });
     void this.resume();
   }
 
@@ -543,30 +498,20 @@ export class BinauralEngine {
     if (!this.playing) return;
     this.playing = false;
 
-    // Fade each channel's gain to TRUE silence before stopping the
-    // oscillator/buffer source feeding it — `oscLeft.stop()` etc. used to
-    // be called with no scheduled time at all, cutting the drone's
-    // continuous tones (and the noise buffer) off at whatever waveform
-    // amplitude they happened to be at that exact instant. That's an
-    // audible click every single time Pause/Stop is pressed, the same
-    // root cause as the tick-release fix above — a genuine discontinuity
-    // in the waveform, not just a loudness question. `cancelScheduledValues`
-    // + re-pinning the current value first (rather than a bare ramp call)
-    // matches this file's existing pattern elsewhere (see masterGain's
-    // handling below) for correctly interrupting any automation already
-    // in flight — the drone's own live swing-pan curve (scheduleDroneSwing())
-    // included.
+    // Fade all audible layers before stopping their native sources.
     const now = this.context.currentTime;
     const stopAtSec = now + DRONE_STOP_RELEASE_SEC;
-    [this.droneGainLeft, this.droneGainRight, this.noiseGain].forEach((gainNode) => {
+    [this.noiseGain].forEach((gainNode) => {
       gainNode.gain.cancelScheduledValues(now);
       gainNode.gain.setValueAtTime(gainNode.gain.value, now);
       gainNode.gain.linearRampToValueAtTime(0, stopAtSec);
     });
-    this.oscLeft?.stop(stopAtSec);
-    this.oscRight?.stop(stopAtSec);
-    this.oscLeft = null;
-    this.oscRight = null;
+    this.voice?.stop(stopAtSec);
+    this.voice = null;
+    this.rhythm?.stop(stopAtSec);
+    this.rhythm = null;
+    this.retiringRhythms.forEach(rhythm => rhythm.stop(stopAtSec));
+    this.retiringRhythms.clear();
 
     // Silence and cancel every tick/chime that was pre-scheduled during the
     // 30-second background window. Merely stopping BeatScheduler prevents
@@ -575,19 +520,14 @@ export class BinauralEngine {
     this.transientGateGain.gain.setValueAtTime(this.transientGateGain.gain.value, now);
     this.transientGateGain.gain.linearRampToValueAtTime(0, stopAtSec);
     const canceledTransientCount = this.cancelScheduledTransients(stopAtSec);
+    this.closingSources.cancelAll(stopAtSec);
     this.mediaElementPauseTimer = setTimeout(() => {
       this.noiseElement.pause();
       this.noiseElement.currentTime = 0;
       this.mediaElementPauseTimer = null;
     }, DRONE_STOP_RELEASE_SEC * 1000 + 5);
 
-    // Unconditionally re-prime masterGain to the slider's real value.
-    // `masterGain` is created once in the constructor and persists across
-    // stop/start cycles — nothing else ever resets it. Without this, a
-    // session that faded it to ~0 via beginSessionFadeOut() (see below)
-    // would leave the NEXT start() beginning silently, since the ramp
-    // automation from the previous session is still in effect on this
-    // same GainNode.
+    // Restore the user's master trim for the next playthrough.
     this.masterGain.gain.cancelScheduledValues(this.context.currentTime);
     this.masterGain.gain.setValueAtTime(this.params.masterVolume, this.context.currentTime);
     recordAudioDiagnostic('playback-stop', {
@@ -596,32 +536,28 @@ export class BinauralEngine {
     });
   }
 
-  /**
-   * Ramp `masterGain` smoothly to silence over `fadeDurationSec`, starting
-   * from whatever it's currently at. Deliberately does NOT touch
-   * `params.masterVolume` — that's the slider's source of truth, and stays
-   * exactly where the user left it; only the live AudioParam is overridden
-   * temporarily. `stop()` (above) is what re-primes it afterward, so the
-   * next session starts at full volume again rather than picking up from
-   * wherever this ramp left off.
-   */
-  beginSessionFadeOut(fadeDurationSec: number): void {
+  /** Schedule the fade and final silence on a dedicated native gate.
+   * Neither page-timer delays nor master-volume changes can undo it. */
+  scheduleSessionEnd(durationSec: number, fadeDurationSec: number): void {
+    this.cancelSessionFade();
     const now = this.context.currentTime;
-    this.masterGain.gain.cancelScheduledValues(now);
-    this.masterGain.gain.setValueAtTime(this.masterGain.gain.value, now);
-    this.masterGain.gain.linearRampToValueAtTime(0.0001, now + fadeDurationSec);
+    const fadeAt = scheduleSessionGate(this.sessionGain, now, durationSec, fadeDurationSec);
+    this.playClosingChime(fadeAt);
   }
 
-  /** Cancels any in-flight session fade-out ramp and snaps `masterGain`
-   * back to the slider's real value immediately — used when a NEW session
-   * is armed (a duration is re-picked mid-play) while an OLDER session's
-   * fade-out ramp is still running, so that stale automation can't keep
-   * silently pulling the volume toward zero underneath a session that now
-   * thinks it's freshly 'active'. */
+  /** Cancel the previous deadline before rearming or choosing Infinite. */
   cancelSessionFade(): void {
     const now = this.context.currentTime;
     this.masterGain.gain.cancelScheduledValues(now);
     this.masterGain.gain.setValueAtTime(this.params.masterVolume, now);
+    this.sessionGain.gain.cancelScheduledValues(now);
+    this.sessionGain.gain.setValueAtTime(1, now);
+    if (this.closingGain) {
+      this.closingGain.gain.cancelScheduledValues(now);
+      this.closingGain.gain.setValueAtTime(this.closingGain.gain.value, now);
+      this.closingGain.gain.linearRampToValueAtTime(0, now + 0.03);
+    }
+    this.closingSources.cancelAll(now + 0.03);
   }
 
   /**
@@ -636,22 +572,28 @@ export class BinauralEngine {
    * per-oscillator envelope style as playTick()'s switch statement below,
    * just with a much longer tail.
    */
-  playClosingChime(): void {
-    const now = this.context.currentTime;
+  playClosingChime(atTimeSec = this.context.currentTime): void {
+    const now = atTimeSec;
     const root = this.params.carrierHz;
     const intervals = [1, 1.5, 2]; // root, fifth, octave
     const chimeGain = this.context.createGain();
+    this.closingGain = chimeGain;
     chimeGain.connect(this.transientGateGain);
     chimeGain.gain.setValueAtTime(0, now);
     chimeGain.gain.linearRampToValueAtTime(0.35, now + 0.3);
     chimeGain.gain.exponentialRampToValueAtTime(0.0001, now + 4);
 
+    let remaining = intervals.length;
     intervals.forEach((ratio) => {
       const osc = this.context.createOscillator();
       osc.type = 'sine';
       osc.frequency.value = root * ratio;
       osc.connect(chimeGain);
-      this.trackTransientSource(osc);
+      this.closingSources.track(osc);
+      osc.addEventListener('ended', () => {
+        osc.disconnect();
+        if (--remaining === 0) chimeGain.disconnect();
+      }, { once: true });
       osc.start(now);
       osc.stop(now + 4.1);
     });
@@ -669,7 +611,9 @@ export class BinauralEngine {
    */
   playIntervalChime(atTimeSec: number, chimeCount: number): void {
     const root = this.params.carrierHz * 2;
-    for (let i = 0; i < chimeCount; i++) {
+    // Bound the work and avoid overlapping minute-long trains after days
+    // of open-ended playback. The count still grows through twelve rings.
+    for (let i = 0; i < Math.min(chimeCount, 12); i++) {
       const toneStart = atTimeSec + i * (INTERVAL_CHIME_TONE_SEC + INTERVAL_CHIME_GAP_SEC);
       const osc = this.context.createOscillator();
       const gain = this.context.createGain();
@@ -679,6 +623,7 @@ export class BinauralEngine {
       gain.gain.linearRampToValueAtTime(0.28, toneStart + 0.015);
       osc.connect(gain).connect(this.transientGateGain);
       this.trackTransientSource(osc);
+      osc.addEventListener('ended', () => { osc.disconnect(); gain.disconnect(); }, { once: true });
       const stopAt = toneStart + INTERVAL_CHIME_TONE_SEC;
       // Same click-free release shape as fireTickOscillator(): ride the
       // exponential decay near-silent, then a short linear ramp to an
@@ -696,27 +641,21 @@ export class BinauralEngine {
   setFrequencies(carrierHz: number, beatHz: number): void {
     this.params.carrierHz = carrierHz;
     this.params.beatHz = beatHz;
-    if (this.oscLeft && this.oscRight) {
-      this.oscLeft.frequency.setTargetAtTime(carrierHz, this.context.currentTime, 0.05);
-      this.oscRight.frequency.setTargetAtTime(carrierHz + beatHz, this.context.currentTime, 0.05);
-    }
+    this.voice?.setFrequencies(carrierHz, beatHz);
+    this.rhythm?.updateTicks({ carrierHz });
   }
 
-  /** Does NOT touch the drone gain nodes directly while playing — once
-   * playback has started, `scheduleDroneSwing()` pre-schedules a
-   * `setValueCurveAtTime()` curve on `droneGainLeft`/`droneGainRight` for
-   * every beat, and a same-param `setTargetAtTime()` call here (via
-   * `applyDroneBalance()`) that overlaps that curve throws a real, uncaught
-   * `NotSupportedError` in Chrome — which used to abort this method before
-   * it reached the tick/noise lines below, silently breaking all three
-   * sliders until the next Pause cleared the scheduled curve. The updated
-   * `droneVolume` is still applied — just picked up by the very next
-   * `scheduleDroneSwing()` call (at most one beat away) instead of being
-   * pushed twice through two conflicting scheduling APIs. */
+  /** Independent gain controls remain responsive without replacing a loop. */
   setVolumes(droneVolume: number, tickVolume: number, noiseVolume: number): void {
     this.params.droneVolume = droneVolume;
     this.params.tickVolume = tickVolume;
     this.params.noiseVolume = noiseVolume;
+    const trim = mixHeadroom(droneVolume, tickVolume, noiseVolume);
+    // Make room faster than the layer gains rise; restore trim more slowly
+    // than they fall. Equal time constants can overshoot while both move.
+    this.headroomGain.gain.setTargetAtTime(trim, this.context.currentTime,
+      trim < this.headroomGain.gain.value ? 0.003 : 0.25);
+    this.voice?.setVolume(droneVolume);
     this.tickGain.gain.setTargetAtTime(clamp01(tickVolume), this.context.currentTime, 0.03);
     this.noiseGain.gain.setTargetAtTime(clamp01(noiseVolume), this.context.currentTime, 0.03);
   }
@@ -741,18 +680,23 @@ export class BinauralEngine {
 
   setTickSound(tickSound: TickSound): void {
     this.params.tickSound = tickSound;
+    this.rhythm?.updateTicks({ tickSound });
   }
 
   setTickEarMode(mode: TickEarMode): void {
     this.params.tickEarMode = mode;
+    this.rhythm?.updateTicks({ tickEarMode: mode });
   }
 
-  /** See the comment on setVolumes() — deliberately does not call
-   * applyDroneBalance() while playing, for the same NotSupportedError
-   * reason. The updated depth is picked up by the next
-   * scheduleDroneSwing() call. */
+  setTickSubdivision(tickSubdivision: TickSubdivision): void {
+    this.params.tickSubdivision = tickSubdivision;
+    this.rhythm?.updateTicks({ tickSubdivision });
+  }
+
+  /** Preserve the existing constant-sum ear balance; depth zero is steady. */
   setPanModulationDepth(depth: number): void {
     this.params.panModulationDepth = clamp01(depth);
+    this.voice?.setDepth(depth);
   }
 
   /** Retract rhythm events that the lookahead scheduler already committed
@@ -760,8 +704,17 @@ export class BinauralEngine {
    * alive; the caller immediately replaces these ticks and swing curves
    * with a new tempo phase beginning at the same pendulum endpoint. */
   clearScheduledRhythmAfter(transitionTimeSec: number): void {
-    this.droneGainLeft.gain.cancelScheduledValues(transitionTimeSec);
-    this.droneGainRight.gain.cancelScheduledValues(transitionTimeSec);
+    if (this.rhythm) {
+      this.rhythm.stop(transitionTimeSec);
+      this.retiringRhythms.add(this.rhythm);
+      this.rhythm = null;
+    }
+    // Keep only transitions still in flight (manual pause must stop these).
+    this.retiringRhythms.forEach(rhythm => {
+      if (rhythm.finished) {
+        this.retiringRhythms.delete(rhythm);
+      }
+    });
     const canceledTransientCount = this.cancelScheduledTransients(transitionTimeSec);
     recordAudioDiagnostic('rhythm-rescheduled', {
       transitionTimeSec,
@@ -769,153 +722,23 @@ export class BinauralEngine {
     });
   }
 
-  /**
-   * Pre-schedules the ENTIRE drone L/R balance curve for one swing
-   * segment (one beat's worth of pendulum travel), sampling
-   * `pendulumEase()`'s exact shape into native Web Audio automation
-   * curves via `setValueCurveAtTime` — called once per beat from
-   * `handleBeatScheduled` (`useMetronomeEngine.ts`), the SAME trigger
-   * that already reliably schedules ticks in the background, rather than
-   * being pushed continuously from the visual's `requestAnimationFrame`
-   * loop every frame (the previous design). That distinction is what
-   * makes the drone's stereo balance keep oscillating even when the tab
-   * is backgrounded: `requestAnimationFrame` is throttled to near-zero
-   * (or fully paused) in a hidden tab, but a curve committed ahead of
-   * time to the audio graph plays out entirely on the audio rendering
-   * thread, immune to ANY main-thread timer throttling — including the
-   * throttling that eventually catches even `setInterval` in a long-
-   * hidden tab (which is why this needed to be genuine audio-graph
-   * automation, not just a `setInterval`-driven fallback).
-   *
-   * `fromPan`/`toPan` are -1 (left hemisphere) to 1 (right) — the same
-   * convention the visual's swing math already uses. `hangWeight` is
-   * `pendulumEase()`'s own shape parameter, computed by the caller from
-   * the current band's mood + live tempo, matching the visual exactly.
-   */
-  scheduleDroneSwing(fromPan: number, toPan: number, hangWeight: number, fromTimeSec: number, toTimeSec: number): void {
+  /** Begin one perpetual two-beat loop at a shared audio/visual boundary.
+   * Call again only after clearScheduledRhythmAfter(), not once per beat. */
+  scheduleDroneSwing(fromPan: number, _toPan: number, hangWeight: number, fromTimeSec: number, toTimeSec: number): void {
     const duration = toTimeSec - fromTimeSec;
-    if (duration <= 0) return;
-    const leftCurve = new Float32Array(DRONE_SWING_CURVE_SAMPLES);
-    const rightCurve = new Float32Array(DRONE_SWING_CURVE_SAMPLES);
-    for (let i = 0; i < DRONE_SWING_CURVE_SAMPLES; i++) {
-      const t = i / (DRONE_SWING_CURVE_SAMPLES - 1);
-      const eased = pendulumEase(t, hangWeight);
-      const panValue = clampPan(fromPan + (toPan - fromPan) * eased);
-      const gains = computeDroneEarGains(panValue, this.params.panModulationDepth, this.params.droneVolume);
-      leftCurve[i] = gains.left;
-      rightCurve[i] = gains.right;
-    }
-    this.droneGainLeft.gain.setValueCurveAtTime(leftCurve, fromTimeSec, duration);
-    this.droneGainRight.gain.setValueCurveAtTime(rightCurve, fromTimeSec, duration);
-    // Kept fresh (best-effort — a beat behind at worst) so
-    // setVolumes()/setPanModulationDepth() below have a reasonable value
-    // to immediately reapply from when a slider's dragged mid-play,
-    // without needing a live per-frame push of their own.
-    this.lastPanValue = toPan;
+    if (duration <= 0 || !this.voice || this.rhythm) return;
+    this.rhythm = new ContinuousRhythm(this.context, fromTimeSec, {
+      secondsPerBeat: duration,
+      firstSide: fromPan < 0 ? -1 : 1,
+      hangWeight,
+      tickSound: this.params.tickSound,
+      tickEarMode: this.params.tickEarMode,
+      tickSubdivision: this.params.tickSubdivision,
+      carrierHz: this.params.carrierHz,
+    }, this.voice.leftDepth, this.voice.rightDepth, this.tickGain, this.retiringRhythms.size === 0);
+    recordAudioDiagnostic('native-rhythm-start', { fromTimeSec, secondsPerBeat: duration });
   }
 
-  private applyDroneBalance(): void {
-    const gains = computeDroneEarGains(this.lastPanValue, this.params.panModulationDepth, this.params.droneVolume);
-    this.droneGainLeft.gain.setTargetAtTime(gains.left, this.context.currentTime, 0.05);
-    this.droneGainRight.gain.setTargetAtTime(gains.right, this.context.currentTime, 0.05);
-  }
-
-  /** Which ear(s) the tick fires into, given `matchSide` — the ear the
-   * pendulum just arrived at (the drone's currently-favored ear). Resolves
-   * `tickEarMode` into an actual pan value: -1 full left, 0 centered/both,
-   * 1 full right. */
-  private resolveTickPan(matchSide: 'left' | 'right'): number {
-    switch (this.params.tickEarMode) {
-      case 'BOTH':
-        return 0;
-      case 'OPPOSITE':
-        return matchSide === 'left' ? 1 : -1;
-      case 'MATCH':
-      default:
-        return matchSide === 'left' ? -1 : 1;
-    }
-  }
-
-  /** Builds and fires one tick oscillator at a precise pre-scheduled
-   * AudioContext time — never "now" (see src/engine/timing.ts's
-   * TimeDomainSync for why real-time scheduling matters). Shared by
-   * `playTick()` (the main end-of-swing tick, pan resolved from
-   * `tickEarMode`) and `playCenterTick()` (the "&" off-beat tick, always
-   * centered) so the 4-case tickSound switch is never duplicated between
-   * them. `gainScale` multiplies each sound's own peak gain — 1 for the
-   * main tick, CENTER_TICK_GAIN_SCALE for the center tick. */
-  private fireTickOscillator(atTimeSec: number, panValue: number, gainScale: number): void {
-    const osc = this.context.createOscillator();
-    const gain = this.context.createGain();
-    const panner = this.context.createStereoPanner();
-    panner.pan.value = clampPan(panValue);
-
-    osc.connect(gain).connect(panner).connect(this.tickGain);
-    this.trackTransientSource(osc);
-
-    let duration: number;
-    switch (this.params.tickSound) {
-      case 'wood':
-        duration = 0.03;
-        osc.type = 'triangle';
-        osc.frequency.setValueAtTime(1200, atTimeSec);
-        osc.frequency.exponentialRampToValueAtTime(100, atTimeSec + duration);
-        gain.gain.setValueAtTime(0.8 * gainScale, atTimeSec);
-        break;
-      case 'kick':
-        duration = 0.12;
-        osc.type = 'sine';
-        osc.frequency.setValueAtTime(150, atTimeSec);
-        osc.frequency.exponentialRampToValueAtTime(30, atTimeSec + duration);
-        gain.gain.setValueAtTime(1.0 * gainScale, atTimeSec);
-        break;
-      case 'hihat':
-        duration = 0.02;
-        osc.type = 'square';
-        osc.frequency.setValueAtTime(4000, atTimeSec);
-        gain.gain.setValueAtTime(0.3 * gainScale, atTimeSec);
-        break;
-      case 'soft':
-      default:
-        duration = 0.08;
-        osc.type = 'sine';
-        osc.frequency.setValueAtTime(this.params.carrierHz, atTimeSec);
-        gain.gain.setValueAtTime(0.7 * gainScale, atTimeSec);
-        break;
-    }
-
-    // Click-free release, shared by every tickSound: ride the exponential
-    // decay down close to silence, then finish with a short LINEAR ramp
-    // to an exact 0 (an exponential ramp can only ever approach zero,
-    // never reach it — the old code stopped the oscillator right at the
-    // exponential ramp's end, which meant `osc.stop()` cut the waveform
-    // off at whatever nonzero amplitude the oscillator's own phase
-    // happened to be at that instant — a genuine discontinuity, audible
-    // as a click regardless of how quiet the gain had gotten). Stopping
-    // only once the gain has actually reached true silence removes that
-    // discontinuity entirely.
-    const stopAtSec = atTimeSec + duration;
-    gain.gain.exponentialRampToValueAtTime(0.0001, stopAtSec);
-    gain.gain.linearRampToValueAtTime(0, stopAtSec + TICK_RELEASE_TAIL_SEC);
-    osc.start(atTimeSec);
-    osc.stop(stopAtSec + TICK_RELEASE_TAIL_SEC);
-  }
-
-  /**
-   * Play one metronome tick at a precise pre-scheduled AudioContext time.
-   * `matchSide` is the ear the pendulum's arm just arrived at; where the
-   * tick actually fires depends on `tickEarMode` (see resolveTickPan()).
-   */
-  playTick(matchSide: 'left' | 'right', atTimeSec: number): void {
-    this.fireTickOscillator(atTimeSec, this.resolveTickPan(matchSide), 1);
-  }
-
-  /** The "&" off-beat tick (see TickSubdivision) — ALWAYS dead-center
-   * (pan 0), regardless of TickEarMode, and always at
-   * CENTER_TICK_GAIN_SCALE — both confirmed, not configurable. */
-  playCenterTick(atTimeSec: number): void {
-    this.fireTickOscillator(atTimeSec, 0, CENTER_TICK_GAIN_SCALE);
-  }
 
   private trackTransientSource(source: AudioScheduledSourceNode): void {
     this.scheduledTransientSources.track(source);
@@ -927,6 +750,7 @@ export class BinauralEngine {
 
   close(): void {
     this.stop();
+    this.channelProbe?.stop(this.context.currentTime);
     if (this.mediaElementPauseTimer) clearTimeout(this.mediaElementPauseTimer);
     this.noiseElement.pause();
     this.noiseElement.removeAttribute('src');
