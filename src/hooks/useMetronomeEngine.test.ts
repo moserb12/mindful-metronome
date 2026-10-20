@@ -1,5 +1,30 @@
 import { describe, expect, it } from 'vitest';
-import { computeSessionPhase, computeSwingSegment, type SessionState, type SwingState } from './useMetronomeEngine';
+import { computeSessionPhase, computeSwingSegment, resolveInitialSettings, type SessionState, type SwingState } from './useMetronomeEngine';
+
+describe('initial mixer levels', () => {
+  it('gives a first-time visitor a balanced mix with master headroom', () => {
+    window.localStorage.clear();
+    expect(resolveInitialSettings()).toMatchObject({
+      masterVolume: 0.5,
+      droneVolume: 0.8,
+      tickVolume: 0.5,
+      noiseVolume: 0.2,
+    });
+  });
+
+  it('preserves a returning visitor’s saved mix', () => {
+    window.localStorage.setItem('mindful-metronome:settings:v1', JSON.stringify({
+      masterVolume: 0.7, droneVolume: 0.4, tickVolume: 0.9, noiseVolume: 0.1,
+    }));
+    expect(resolveInitialSettings()).toMatchObject({
+      masterVolume: 0.7,
+      droneVolume: 0.4,
+      tickVolume: 0.9,
+      noiseVolume: 0.1,
+    });
+    window.localStorage.clear();
+  });
+});
 
 // ============================================================================
 // computeSwingSegment is the fix for a real bug: an earlier version only

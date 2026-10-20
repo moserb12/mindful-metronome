@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { makeSwingBuffer, makeTickBuffer, type RhythmSettings } from './continuousRhythm';
 import { crossfadeLoop } from './loopSeam';
 import { pendulumEase } from '../engine/motion';
-import { mixHeadroom } from './mixHeadroom';
+import { mixHeadroom, tickMixerGain } from './mixHeadroom';
 
 // These tests inspect sample data only. qa/audio.html separately renders
 // the actual production nodes through the browser's OfflineAudioContext.
@@ -67,9 +67,12 @@ describe('noise loop seam', () => {
   });
 });
 
-it('reserves headroom at every supported mixer level without altering ear balance', () => {
-  for (const drone of [0, 0.55, 1]) for (const tick of [0, 0.7, 1]) for (const noise of [0, 0.08, 1]) {
-    const maxPeak = drone + 1.2 * tick + noise + 1.35;
+it('boosts tick at 50% and 100% while retaining headroom at every mixer level', () => {
+  expect(tickMixerGain(0)).toBe(0);
+  expect(tickMixerGain(0.5)).toBe(1.5);
+  expect(tickMixerGain(1)).toBe(3);
+  for (const drone of [0, 0.8, 1]) for (const tick of [0, 0.5, 1]) for (const noise of [0, 0.2, 1]) {
+    const maxPeak = drone + 0.8 * tickMixerGain(tick) + noise + 1.35;
     expect(maxPeak * mixHeadroom(drone, tick, noise)).toBeCloseTo(0.95);
   }
 });

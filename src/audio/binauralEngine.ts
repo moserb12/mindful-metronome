@@ -8,7 +8,7 @@ import { recordAudioDiagnostic } from './audioDiagnostics';
 import { BinauralVoice } from './binauralVoice';
 import { ContinuousRhythm } from './continuousRhythm';
 import { crossfadeLoop } from './loopSeam';
-import { mixHeadroom } from './mixHeadroom';
+import { mixHeadroom, tickMixerGain } from './mixHeadroom';
 import { scheduleSessionGate } from './sessionEnvelope';
 import { calibrateNoiseBuffer } from './volumeCalibration';
 import { ScheduledAudioSourceRegistry } from './scheduledAudioSources';
@@ -359,7 +359,7 @@ export class BinauralEngine {
     this.masterGain.connect(this.sessionGain).connect(this.context.destination);
 
     this.tickGain = this.context.createGain();
-    this.tickGain.gain.value = initialParams.tickVolume;
+    this.tickGain.gain.value = tickMixerGain(initialParams.tickVolume);
     this.transientGateGain = this.context.createGain();
     this.transientGateGain.gain.value = 1;
     this.tickGain.connect(this.transientGateGain);
@@ -657,7 +657,7 @@ export class BinauralEngine {
     this.headroomGain.gain.setTargetAtTime(trim, this.context.currentTime,
       trim < this.headroomGain.gain.value ? 0.003 : 0.25);
     this.voice?.setVolume(droneVolume);
-    this.tickGain.gain.setTargetAtTime(clamp01(tickVolume), this.context.currentTime, 0.03);
+    this.tickGain.gain.setTargetAtTime(tickMixerGain(tickVolume), this.context.currentTime, 0.03);
     this.noiseGain.gain.setTargetAtTime(clamp01(noiseVolume), this.context.currentTime, 0.03);
   }
 

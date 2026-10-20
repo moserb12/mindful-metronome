@@ -56,7 +56,7 @@ const SESSION_END_MOMENT_MS = 3000;
  * initializer below, which React guarantees only runs on mount), not on
  * every render — it does real localStorage/URL reads.
  */
-function resolveInitialSettings() {
+export function resolveInitialSettings() {
   const stored = loadSettings();
   const urlOverrides =
     typeof window !== 'undefined' ? decodeSettingsFromSearchParams(window.location.search) : {};
@@ -65,10 +65,10 @@ function resolveInitialSettings() {
     beatHz: urlOverrides.beatHz ?? stored.beatHz ?? DEFAULT_PRESET.beatHz,
     bpm: urlOverrides.bpm ?? stored.bpm ?? DEFAULT_PRESET.bpm,
     tickSound: stored.tickSound ?? ('soft' as TickSound),
-    masterVolume: stored.masterVolume ?? 0.85,
-    droneVolume: stored.droneVolume ?? 0.55,
-    tickVolume: stored.tickVolume ?? 0.7,
-    noiseVolume: stored.noiseVolume ?? 0.08,
+    masterVolume: stored.masterVolume ?? 0.5,
+    droneVolume: stored.droneVolume ?? 0.8,
+    tickVolume: stored.tickVolume ?? 0.5,
+    noiseVolume: stored.noiseVolume ?? 0.2,
     noiseType: normalizeNoiseShieldType(urlOverrides.noiseType ?? stored.noiseType ?? ('pink' as NoiseType)),
     panModulationDepth: stored.panModulationDepth ?? 0.6,
     tickEarMode: stored.tickEarMode ?? ('MATCH' as TickEarMode),
