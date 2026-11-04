@@ -1,3 +1,7 @@
+// Lift the continuous tones above the tick/noise layers. The common trim
+// below includes this boost, preserving the ear ratio without clipping.
+export const DRONE_MIX_GAIN = 4;
+
 // Tick transients are brief and share the drone's frequency in Soft pulse.
 // Give their slider more useful range without touching the saved 0..1 value.
 export const TICK_MIX_GAIN = 3;
@@ -12,5 +16,5 @@ export function tickMixerGain(volume: number): number {
  * preserves relative ear/layer levels without a compressor pumping tones. */
 export function mixHeadroom(drone: number, tick: number, noise: number): number {
   const clamp = (value: number) => Math.max(0, Math.min(1, value));
-  return 0.95 / (clamp(drone) + TICK_SOURCE_PEAK_LIMIT * tickMixerGain(tick) + clamp(noise) + 1.35);
+  return 0.95 / (DRONE_MIX_GAIN * clamp(drone) + TICK_SOURCE_PEAK_LIMIT * tickMixerGain(tick) + clamp(noise) + 1.35);
 }

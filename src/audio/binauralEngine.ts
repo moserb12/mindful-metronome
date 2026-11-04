@@ -8,7 +8,7 @@ import { recordAudioDiagnostic } from './audioDiagnostics';
 import { BinauralVoice } from './binauralVoice';
 import { ContinuousRhythm } from './continuousRhythm';
 import { crossfadeLoop } from './loopSeam';
-import { mixHeadroom, tickMixerGain } from './mixHeadroom';
+import { DRONE_MIX_GAIN, mixHeadroom, tickMixerGain } from './mixHeadroom';
 import { scheduleSessionGate } from './sessionEnvelope';
 import { calibrateNoiseBuffer } from './volumeCalibration';
 import { ScheduledAudioSourceRegistry } from './scheduledAudioSources';
@@ -321,6 +321,7 @@ export class BinauralEngine {
   private mediaElementPauseTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly scheduledTransientSources = new ScheduledAudioSourceRegistry();
 
+  private readonly droneGain: GainNode;
   private readonly tickGain: GainNode;
   private readonly noiseGain: GainNode;
   private readonly transientGateGain: GainNode;
@@ -357,6 +358,10 @@ export class BinauralEngine {
     this.analyser.connect(this.headroomGain).connect(this.masterGain);
     this.sessionGain = this.context.createGain();
     this.masterGain.connect(this.sessionGain).connect(this.context.destination);
+
+    this.droneGain = this.context.createGain();
+    this.droneGain.gain.value = DRONE_MIX_GAIN;
+    this.droneGain.connect(this.analyser);
 
     this.tickGain = this.context.createGain();
     this.tickGain.gain.value = tickMixerGain(initialParams.tickVolume);
@@ -460,7 +465,7 @@ export class BinauralEngine {
     this.noiseGain.gain.setValueAtTime(clamp01(this.params.noiseVolume), now);
     this.transientGateGain.gain.setValueAtTime(1, now);
 
-    this.voice = new BinauralVoice(this.context, this.analyser);
+    this.voice = new BinauralVoice(this.context, this.droneGain);
     this.voice.start(this.params.carrierHz, this.params.beatHz, this.params.droneVolume, this.params.panModulationDepth);
     recordAudioDiagnostic('playback-start', {
       contextState: this.context.state,
