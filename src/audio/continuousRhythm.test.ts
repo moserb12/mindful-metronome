@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { makeSwingBuffer, makeTickBuffer, type RhythmSettings } from './continuousRhythm';
 import { crossfadeLoop } from './loopSeam';
 import { pendulumEase } from '../engine/motion';
-import { mixHeadroom, tickMixerGain } from './mixHeadroom';
+import { DRONE_MIX_GAIN, mixHeadroom, tickMixerGain } from './mixHeadroom';
 
 // These tests inspect sample data only. qa/audio.html separately renders
 // the actual production nodes through the browser's OfflineAudioContext.
@@ -72,7 +72,15 @@ it('boosts tick at 50% and 100% while retaining headroom at every mixer level', 
   expect(tickMixerGain(0.5)).toBe(1.5);
   expect(tickMixerGain(1)).toBe(3);
   for (const drone of [0, 0.8, 1]) for (const tick of [0, 0.5, 1]) for (const noise of [0, 0.2, 1]) {
-    const maxPeak = drone + 0.8 * tickMixerGain(tick) + noise + 1.35;
+    const maxPeak = DRONE_MIX_GAIN * drone + 0.8 * tickMixerGain(tick) + noise + 1.35;
     expect(maxPeak * mixHeadroom(drone, tick, noise)).toBeCloseTo(0.95);
+  }
+});
+
+it('more than doubles tone output in the default mix and at full mixer levels', () => {
+  for (const [drone, tick, noise] of [[0.8, 0.5, 0.2], [1, 1, 1]]) {
+    const previousToneLevel = drone * 0.95 / (drone + 0.8 * tickMixerGain(tick) + noise + 1.35);
+    const toneLevel = DRONE_MIX_GAIN * drone * mixHeadroom(drone, tick, noise);
+    expect(toneLevel).toBeGreaterThan(previousToneLevel * 2);
   }
 });
