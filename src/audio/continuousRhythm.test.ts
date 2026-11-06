@@ -70,7 +70,7 @@ describe('noise loop seam', () => {
 it('boosts tick at 50% and 100% while retaining headroom at every mixer level', () => {
   expect(tickMixerGain(0)).toBe(0);
   expect(tickMixerGain(0.5)).toBe(1.5);
-  expect(tickMixerGain(1)).toBe(3);
+  expect(tickMixerGain(1)).toBe(6);
   for (const drone of [0, 0.8, 1]) for (const tick of [0, 0.5, 1]) for (const noise of [0, 0.2, 1]) {
     const maxPeak = DRONE_MIX_GAIN * drone + 0.8 * tickMixerGain(tick) + noise + 1.35;
     expect(maxPeak * mixHeadroom(drone, tick, noise)).toBeCloseTo(0.95);
@@ -79,8 +79,24 @@ it('boosts tick at 50% and 100% while retaining headroom at every mixer level', 
 
 it('more than doubles tone output in the default mix and at full mixer levels', () => {
   for (const [drone, tick, noise] of [[0.8, 0.5, 0.2], [1, 1, 1]]) {
-    const previousToneLevel = drone * 0.95 / (drone + 0.8 * tickMixerGain(tick) + noise + 1.35);
+    const previousToneLevel = drone * 0.95 / (drone + 0.8 * 3 * tick + noise + 1.35);
     const toneLevel = DRONE_MIX_GAIN * drone * mixHeadroom(drone, tick, noise);
     expect(toneLevel).toBeGreaterThan(previousToneLevel * 2);
+  }
+});
+
+it('raises the maximum audible tick with typical and full backing layers', () => {
+  for (const [drone, noise] of [[0.8, 0.2], [1, 1]]) {
+    const previousTick = 3 * 0.95 / (DRONE_MIX_GAIN * drone + 0.8 * 3 + noise + 1.35);
+    const louderTick = tickMixerGain(1) * mixHeadroom(drone, 1, noise);
+    expect(louderTick).toBeGreaterThan(previousTick * 1.4);
+  }
+  expect(tickMixerGain(-1)).toBe(0);
+  expect(tickMixerGain(2)).toBe(6);
+  let previous = 0;
+  for (let position = 0; position <= 100; position++) {
+    const level = tickMixerGain(position / 100);
+    expect(level).toBeGreaterThanOrEqual(previous);
+    previous = level;
   }
 });

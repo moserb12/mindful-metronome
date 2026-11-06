@@ -15,9 +15,13 @@
   relative ear balance.
 - The drone bus now has a 4x boost before that trim, included in its peak
   budget. After trimming, tone amplitude is about 2.25x the previous level
-  with the default mixer settings, and 2.6x with all mixer sliders at maximum.
+  with the default mixer settings, and 2.1x with all mixer sliders at maximum.
   Saved slider values and swing ratios retain their existing meaning. Quiet
   headphone-check probes bypass the boost.
+- The tick slider retains its existing gain through 50%, then smoothly
+  increases to a 6x source gain at maximum (previously 3x). The common trim
+  budgets the louder ticks; output amplitude at full tick is about 1.5x the
+  previous level with the default drone/noise layers.
 
 Two nearby pitches need not be perceived as two distinct notes. Software
 separation is measured with channel spectra, not inferred from that sensation.
