@@ -32,6 +32,9 @@ export function AcousticVisualizer({ isPlaying, getAnalyser, bandColor }: Acoust
   useEffect(() => {
     if (!isPlaying) return;
 
+    let waveform = new Float32Array(0);
+    let spectrum = new Uint8Array(0);
+
     function draw() {
       const canvas = canvasRef.current;
       const analyser = getAnalyser();
@@ -55,32 +58,36 @@ export function AcousticVisualizer({ isPlaying, getAnalyser, bandColor }: Acoust
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, width, height);
 
-      const bufferLength = analyser.frequencyBinCount;
-      const data = new Uint8Array(bufferLength);
-
       if (modeRef.current === 'oscilloscope') {
-        analyser.getByteTimeDomainData(data);
+        // This analyser is before the mix trim, so boosted samples can
+        // exceed +/-1. Byte samples would clip them into flat plateaus.
+        if (waveform.length !== analyser.fftSize) waveform = new Float32Array(analyser.fftSize);
+        analyser.getFloatTimeDomainData(waveform);
+        let peak = 1;
+        for (const sample of waveform) peak = Math.max(peak, Math.abs(sample));
+        // One linear scale for the entire trace preserves its shape and
+        // leaves 5% clearance at each edge, including loud transients.
+        const amplitude = height * 0.45 / peak;
         ctx.lineWidth = 1.5;
         ctx.strokeStyle = bandColor;
         ctx.beginPath();
-        const sliceWidth = width / bufferLength;
-        let x = 0;
-        for (let i = 0; i < bufferLength; i++) {
-          const v = data[i] / 128.0;
-          const y = (v * height) / 2;
+        const sliceWidth = width / (waveform.length - 1);
+        for (let i = 0; i < waveform.length; i++) {
+          const x = i * sliceWidth;
+          const y = height / 2 + waveform[i] * amplitude;
           if (i === 0) ctx.moveTo(x, y);
           else ctx.lineTo(x, y);
-          x += sliceWidth;
         }
-        ctx.lineTo(width, height / 2);
         ctx.stroke();
       } else {
-        analyser.getByteFrequencyData(data);
+        const bufferLength = analyser.frequencyBinCount;
+        if (spectrum.length !== bufferLength) spectrum = new Uint8Array(bufferLength);
+        analyser.getByteFrequencyData(spectrum);
         const bars = 96;
         const barWidth = width / bars;
         for (let i = 0; i < bars; i++) {
           const idx = Math.floor((i / bars) * bufferLength);
-          const barHeight = (data[idx] / 255) * height;
+          const barHeight = (spectrum[idx] / 255) * height;
           const t = i / bars;
           const gradient = ctx.createLinearGradient(0, height, 0, height - barHeight);
           gradient.addColorStop(0, `color-mix(in srgb, ${bandColor} ${30 + t * 40}%, transparent)`);

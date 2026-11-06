@@ -4,6 +4,7 @@ import type { TickSubdivision } from '../../audio/binauralEngine';
 import { ALL_MEDALLIONS_BY_ID, type MedallionId } from '../../data/medallions';
 import { MOOD_BY_BAND } from '../../data/moods';
 import { buildSmoothPath, clamp, pendulumEase, waveOffset } from '../../engine/motion';
+import { updateAudioRingLevels } from '../../engine/audioRing';
 import { computeSwingSegment, type SessionPlaybackPhase, type SessionState, type SwingState } from '../../hooks/useMetronomeEngine';
 import { MEDALLION_BADGE_RADIUS, MedallionGlyph } from '../Dashboard/MedallionIcon';
 import { MedallionPicker } from './MedallionPicker';
@@ -679,7 +680,9 @@ export function MetronomeVisual({
   const timerRingRef = useRef<SVGPathElement | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const smoothedRef = useRef<number[] | null>(null);
+  const smoothedRef = useRef<Float32Array | null>(null);
+  const ringSamplesRef = useRef<Float32Array<ArrayBuffer> | null>(null);
+  const ringTimeRef = useRef<number | null>(null);
   const rafRef = useRef<number | null>(null);
   /** One ref per AMBIENT_PARTICLE, written directly every frame (same
    * imperative-DOM-write pattern as armRef/pupilRef above) — the
@@ -976,6 +979,7 @@ export function MetronomeVisual({
     // isPlaying/bandInfo.color change — a mid-play setBpm() does not
     // re-run it, so dragging the tempo weight never re-triggers a ramp).
     const rampStartSec = getAudioTimeSec();
+    ringTimeRef.current = null;
 
     function frame() {
       const arm = armRef.current;
@@ -1115,11 +1119,11 @@ export function MetronomeVisual({
         timerRingRef.current.setAttribute('d', buildAnnularWedgePathD(sweepDeg, EYE_TIMER_INNER_R, EYE_TIMER_OUTER_R));
       }
 
-      drawWaveform();
+      drawWaveform(now);
       rafRef.current = requestAnimationFrame(frame);
     }
 
-    function drawWaveform() {
+    function drawWaveform(now: number) {
       const canvas = canvasRef.current;
       const analyser = getAnalyser();
       if (!canvas || !analyser) return;
@@ -1135,30 +1139,30 @@ export function MetronomeVisual({
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, size, size);
 
-      const bufferLength = analyser.frequencyBinCount;
-      const data = new Uint8Array(bufferLength);
-      analyser.getByteTimeDomainData(data);
+      if (!ringSamplesRef.current || ringSamplesRef.current.length !== analyser.fftSize) {
+        ringSamplesRef.current = new Float32Array(analyser.fftSize);
+      }
+      const data = ringSamplesRef.current;
+      analyser.getFloatTimeDomainData(data);
 
-      // Heavily smoothed + downsampled ring — "chilled", not a jagged
-      // oscilloscope. Exponential smoothing per point across frames gives
-      // it a slow, breathing quality even though the underlying signal
-      // updates every frame.
+      // A quick energy attack makes quiet tones and brief ticks visible;
+      // a slower release retains the ring's soft, breathing motion.
       const points = 64;
       if (!smoothedRef.current || smoothedRef.current.length !== points) {
-        smoothedRef.current = new Array(points).fill(0);
+        smoothedRef.current = new Float32Array(points);
       }
       const smoothed = smoothedRef.current;
+      const elapsedSec = ringTimeRef.current === null ? 1 / 60 : now - ringTimeRef.current;
+      ringTimeRef.current = now;
+      updateAudioRingLevels(data, smoothed, elapsedSec);
 
       const cx = size / 2;
       const cy = size / 2;
       const baseRadius = size * 0.34;
-      const amp = size * 0.05;
+      const amp = size * 0.075;
 
       ctx.beginPath();
       for (let i = 0; i <= points; i++) {
-        const idx = Math.floor((i % points) * (bufferLength / points));
-        const sample = (data[idx] - 128) / 128;
-        smoothed[i % points] = smoothed[i % points] * 0.9 + sample * 0.1;
         const angle = (i / points) * Math.PI * 2 - Math.PI / 2;
         const r = baseRadius + smoothed[i % points] * amp;
         const x = cx + Math.cos(angle) * r;
@@ -1168,7 +1172,7 @@ export function MetronomeVisual({
       }
       ctx.closePath();
       ctx.strokeStyle = bandInfo.color;
-      ctx.globalAlpha = 0.55;
+      ctx.globalAlpha = 0.7;
       ctx.lineWidth = 1.5;
       ctx.stroke();
     }
