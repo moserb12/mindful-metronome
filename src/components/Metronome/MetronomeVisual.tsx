@@ -4,7 +4,7 @@ import type { TickSubdivision } from '../../audio/binauralEngine';
 import { ALL_MEDALLIONS_BY_ID, type MedallionId } from '../../data/medallions';
 import { MOOD_BY_BAND } from '../../data/moods';
 import { buildSmoothPath, clamp, pendulumEase, waveOffset } from '../../engine/motion';
-import { updateAudioRingLevels } from '../../engine/audioRing';
+import { AUDIO_RING_BASE_RADIUS, AUDIO_RING_SECTIONS, audioRingOffset, updateAudioRingLevels } from '../../engine/audioRing';
 import { computeSwingSegment, type SessionPlaybackPhase, type SessionState, type SwingState } from '../../hooks/useMetronomeEngine';
 import { MEDALLION_BADGE_RADIUS, MedallionGlyph } from '../Dashboard/MedallionIcon';
 import { MedallionPicker } from './MedallionPicker';
@@ -1147,9 +1147,10 @@ export function MetronomeVisual({
 
       // A quick energy attack makes quiet tones and brief ticks visible;
       // a slower release retains the ring's soft, breathing motion.
-      const points = 64;
-      if (!smoothedRef.current || smoothedRef.current.length !== points) {
-        smoothedRef.current = new Float32Array(points);
+      const points = AUDIO_RING_SECTIONS * 64;
+      // One shared audio envelope keeps all three sections identical.
+      if (!smoothedRef.current || smoothedRef.current.length !== 1) {
+        smoothedRef.current = new Float32Array(1);
       }
       const smoothed = smoothedRef.current;
       const elapsedSec = ringTimeRef.current === null ? 1 / 60 : now - ringTimeRef.current;
@@ -1158,13 +1159,13 @@ export function MetronomeVisual({
 
       const cx = size / 2;
       const cy = size / 2;
-      const baseRadius = size * 0.34;
-      const amp = size * 0.075;
+      const baseRadius = size * AUDIO_RING_BASE_RADIUS;
 
       ctx.beginPath();
       for (let i = 0; i <= points; i++) {
-        const angle = (i / points) * Math.PI * 2 - Math.PI / 2;
-        const r = baseRadius + smoothed[i % points] * amp;
+        const phase = (i / points) * Math.PI * 2;
+        const angle = phase - Math.PI / 2;
+        const r = baseRadius + size * audioRingOffset(phase, smoothed[0]);
         const x = cx + Math.cos(angle) * r;
         const y = cy + Math.sin(angle) * r;
         if (i === 0) ctx.moveTo(x, y);
@@ -1335,7 +1336,7 @@ export function MetronomeVisual({
         } as React.CSSProperties
       }
     >
-      <canvas ref={canvasRef} className="metronome-waveform" aria-hidden="true" />
+      <canvas ref={canvasRef} className="metronome-waveform" hidden={!isPlaying} aria-hidden="true" />
       <svg
         ref={svgRef}
         viewBox={`0 0 ${VIEW} ${VIEW}`}
@@ -1343,6 +1344,22 @@ export function MetronomeVisual({
         role="img"
         aria-label="Mindful Metronome visual"
       >
+        {/* Present from first paint without an audio engine. React updates
+            its color on every vibe change, including while paused. */}
+        {!isPlaying && (
+          <circle
+            className="audio-ring-idle"
+            cx={VIEW / 2}
+            cy={VIEW / 2}
+            r={VIEW * AUDIO_RING_BASE_RADIUS}
+            fill="none"
+            stroke={bandInfo.color}
+            strokeWidth={1.5}
+            strokeOpacity={0.7}
+            vectorEffect="non-scaling-stroke"
+            aria-hidden="true"
+          />
+        )}
         {/* Ambient particles — rendered first so they sit BEHIND everything
             else (pyramid, eye, pendulum). Purely decorative. The FLOW
             (radius/opacity while playing) is positioned imperatively
